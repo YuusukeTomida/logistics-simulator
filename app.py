@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import folium
+import json
+import urllib.request
 from streamlit_folium import st_folium
 
 # 1. ページ基本設定
@@ -31,51 +33,25 @@ def load_data(file):
     df_c = pd.read_excel(xls, sheet_name='C')
     return df_a, df_b, df_c
 
+# 埼玉県 GeoJSON（境界データ）のキャッシュ読み込み
+@st.cache_data
+def load_saitama_geojson():
+    # 埼玉県市町村境界の軽量GeoJSONデータURL
+    url = "https://raw.githubusercontent.com/nii-is-info/japan-geojson/master/saitama.geojson"
+    try:
+        req = urllib.request.urlopen(url)
+        data = json.loads(req.read().decode('utf-8'))
+        return data
+    except Exception as e:
+        return None
+
 try:
     df_a, df_b, df_c = load_data(uploaded_file)
 except Exception as e:
     st.error("データの読み込みに失敗しました。A, B, C シートが含まれるExcelファイルであることを確認してください。")
     st.stop()
 
-# 埼玉県72市区町村の推計境界ボックス座標データ（白地図エリア描画用）
-CITY_BOUNDS = {
-    'さいたま市西区': [35.90, 139.56, 35.93, 139.60], 'さいたま市北区': [35.92, 139.60, 35.95, 139.64],
-    'さいたま市大宮区': [35.89, 139.61, 35.92, 139.64], 'さいたま市見沼区': [35.91, 139.64, 35.95, 139.68],
-    'さいたま市中央区': [35.87, 139.60, 35.90, 139.63], 'さいたま市桜区': [35.84, 139.59, 35.88, 139.63],
-    'さいたま市浦和区': [35.85, 139.63, 35.89, 139.67], 'さいたま市南区': [35.83, 139.64, 35.86, 139.68],
-    'さいたま市緑区': [35.85, 139.68, 35.89, 139.72], 'さいたま市岩槻区': [35.93, 139.67, 35.97, 139.72],
-    '川越市': [35.89, 139.44, 35.95, 139.52], '熊谷市': [36.10, 139.34, 36.19, 139.43],
-    '川口市': [35.78, 139.69, 35.84, 139.76], '行田市': [36.10, 139.42, 36.17, 139.49],
-    '秩父市': [35.90, 138.98, 36.08, 139.18], '所沢市': [35.77, 139.42, 35.83, 139.51],
-    '飯能市': [35.81, 139.18, 35.90, 139.36], '加須市': [36.08, 139.55, 36.17, 139.64],
-    '本庄市': [36.19, 139.14, 36.28, 139.23], '東松山市': [36.00, 139.35, 36.08, 139.44],
-    '春日部市': [35.94, 139.71, 36.01, 139.80], '狭山市': [35.82, 139.37, 35.88, 139.45],
-    '羽生市': [36.13, 139.50, 36.21, 139.58], '鴻巣市': [36.02, 139.47, 36.10, 139.55],
-    '深谷市': [36.14, 139.23, 36.24, 139.33], '上尾市': [35.94, 139.55, 36.01, 139.63],
-    '草加市': [35.80, 139.77, 35.85, 139.83], '越谷市': [35.76, 139.76, 35.83, 139.83],
-    '蕨市': [35.81, 139.66, 35.84, 139.70], '戸田市': [35.79, 139.65, 35.83, 139.70],
-    '入間市': [35.80, 139.34, 35.87, 139.42], '朝霞市': [35.79, 139.57, 35.84, 139.62],
-    '志木市': [35.81, 139.55, 35.84, 139.60], '和光市': [35.76, 139.58, 35.80, 139.63],
-    '新座市': [35.77, 139.52, 35.82, 139.58], '桶川市': [35.98, 139.52, 36.03, 139.59],
-    '久喜市': [36.02, 139.62, 36.10, 139.71], '北本市': [36.01, 139.50, 36.05, 139.56],
-    '八潮市': [35.80, 139.81, 35.84, 139.86], '富士見市': [35.83, 139.52, 35.88, 139.57],
-    '三郷市': [35.80, 139.84, 35.86, 139.90], '蓮田市': [35.98, 139.62, 36.01, 139.68],
-    '坂戸市': [35.93, 139.35, 35.98, 139.43], '幸手市': [36.04, 139.69, 36.11, 139.76],
-    '鶴ヶ島市': [35.91, 139.36, 35.95, 139.42], '日高市': [35.86, 139.29, 35.92, 139.37],
-    '吉川市': [35.86, 139.81, 35.92, 139.87], 'ふじみ野市': [35.85, 139.49, 35.90, 139.55],
-    '白岡市': [35.99, 139.63, 36.04, 139.69], '伊奈町': [35.97, 139.60, 36.02, 139.64],
-    '三芳町': [35.81, 139.50, 35.85, 139.55], '毛呂山町': [35.91, 139.26, 35.97, 139.34],
-    '越生町': [35.93, 139.24, 35.99, 139.32], '滑川町': [36.02, 139.35, 36.07, 139.41],
-    '嵐山町': [36.02, 139.30, 36.07, 139.36], '小川町': [36.03, 139.22, 36.09, 139.30],
-    '川島町': [35.96, 139.44, 36.01, 139.52], '吉見町': [36.01, 139.41, 36.07, 139.49],
-    '鳩山町': [35.95, 139.29, 36.01, 139.36], 'ときがわ町': [35.97, 139.23, 36.03, 139.31],
-    '横瀬町': [35.95, 139.07, 36.01, 139.14], '皆野町': [36.04, 139.06, 36.10, 139.13],
-    '長瀞町': [36.09, 139.08, 36.14, 139.14], '小鹿野町': [35.98, 138.92, 36.05, 139.05],
-    '東秩父村': [36.03, 139.14, 36.09, 139.22], '美里町': [36.15, 139.15, 36.21, 139.22],
-    '神川町': [36.13, 139.04, 36.22, 139.14], '上里町': [36.22, 139.10, 36.28, 139.17],
-    '寄居町': [36.08, 139.15, 36.15, 139.23], '宮代町': [36.00, 139.69, 36.05, 139.75],
-    '杉戸町': [36.00, 139.75, 36.06, 139.83], '松伏町': [35.90, 139.79, 35.96, 139.85]
-}
+geojson_data = load_saitama_geojson()
 
 # 3. データ整理・統合
 rows = []
@@ -170,7 +146,7 @@ with tab3:
 
 # 編集データの集計反映ロジック
 active_records = []
-map_status_list = []
+map_status_dict = {}
 
 for idx, r in edited_df.iterrows():
     orig = base_df.loc[idx]
@@ -185,11 +161,10 @@ for idx, r in edited_df.iterrows():
     if r['B社担当']: indiv_selected.append('B社')
     if r['C社担当']: indiv_selected.append('C社')
     
-    map_status_list.append({
-        '市区町村名': city_name,
+    map_status_dict[city_name] = {
         '一括担当': target_comp,
         '個別選択': indiv_selected
-    })
+    }
     
     if has_indiv:
         if r['A社担当']:
@@ -283,16 +258,16 @@ with tab1:
     )
 
     st.markdown("---")
-    st.subheader("🗺️ 埼玉県 市町村別受持選択 白地図エリアマップ")
-    st.caption("エリア塗りつぶし：一括担当（赤: A社, 青: B社, 緑: C社, 灰: なし） / ドット：個別選択された会社の色")
+    st.subheader("🗺️ 埼玉県 市町村別受持選択 白地図（市町村境界表示）")
+    st.caption("塗り分け：一括担当（赤: A社, 青: B社, 緑: C社, 灰: なし） / ドット：個別選択された会社の色")
 
-    # タイル画像を使用せず完全な白地図キャンバス（tiles=None）を作成
+    # 白地図キャンバス作成
     m = folium.Map(
         location=[35.98, 139.40],
-        zoom_start=10,
+        zoom_start=9,
         tiles=None
     )
-    
+
     COLOR_MAP = {
         'A社': '#EF4444',
         'B社': '#3B82F6',
@@ -300,50 +275,38 @@ with tab1:
         'なし': '#E2E8F0'
     }
 
-    for item in map_status_list:
-        c_name = item['市区町村名']
-        bulk = item['一括担当']
-        indivs = item['個別選択']
+    # GeoJSON市町村ポリゴン描画関数
+    def style_function(feature):
+        props = feature.get('properties', {})
+        # NII GeoJSON の市町村名キー取得（N03_004など）
+        city_name = props.get('N03_004', '') or props.get('nam', '') or props.get('name', '')
         
-        bounds = CITY_BOUNDS.get(c_name, [35.9, 139.4, 35.95, 139.45])
+        info = map_status_dict.get(city_name, {'一括担当': 'なし', '個別選択': []})
+        bulk = info['一括担当']
+        indivs = info['個別選択']
+        
         fill_col = COLOR_MAP.get(bulk, '#E2E8F0')
         if bulk == 'なし' and len(indivs) > 0:
             fill_col = '#E2E8F0'
             
-        indiv_str = ', '.join(indivs) if len(indivs) > 0 else 'なし'
-        
-        # 枠線とエリア塗りつぶし（白地図表現）
-        folium.Rectangle(
-            bounds=[[bounds[0], bounds[1]], [bounds[2], bounds[3]]],
-            color="#475569",
-            weight=1.5,
-            fill=True,
-            fill_color=fill_col,
-            fill_opacity=0.75,
-            popup=str(c_name) + " | 一括: " + str(bulk) + " | 個別: " + str(indiv_str),
-            tooltip=str(c_name)
-        ).add_to(m)
-        
-        # ドット表示
-        if len(indivs) > 0:
-            center_lat = (bounds[0] + bounds[2]) / 2.0
-            center_lon = (bounds[1] + bounds[3]) / 2.0
-            for d_idx, comp_indiv in enumerate(indivs):
-                dot_color = COLOR_MAP.get(comp_indiv, '#000000')
-                offset_lat = center_lat + (d_idx - (len(indivs)-1)/2.0) * 0.012
-                folium.CircleMarker(
-                    location=[offset_lat, center_lon],
-                    radius=5,
-                    color='#FFFFFF',
-                    weight=1,
-                    fill=True,
-                    fill_color=dot_color,
-                    fill_opacity=1.0,
-                    popup=str(c_name) + " - 個別: " + str(comp_indiv),
-                    tooltip=str(c_name) + " (" + str(comp_indiv) + ")"
-                ).add_to(m)
+        return {
+            'fillColor': fill_col,
+            'color': '#475569',
+            'weight': 1,
+            'fillOpacity': 0.75
+        }
 
-    st_folium(m, width="100%", height=520)
+    if geojson_data:
+        folium.GeoJson(
+            geojson_data,
+            style_function=style_function,
+            tooltip=folium.GeoJsonTooltip(fields=['N03_004'], aliases=['市町村名:']),
+            name="Saitama Municipalities"
+        ).add_to(m)
+    else:
+        st.warning("GeoJSONデータの読み込みに失敗しました。")
+
+    st_folium(m, width="100%", height=550)
 
 # タブ2: 会社別 & 営業所別 詳細集計
 with tab2:
