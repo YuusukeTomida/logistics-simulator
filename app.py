@@ -217,7 +217,7 @@ for idx, r in edited_df.iterrows():
 
 sim_df = pd.DataFrame(active_records) if len(active_records) > 0 else pd.DataFrame()
 
-# タブ1: サマリー & 元文字消去・ベタ塗りマップ
+# タブ1: サマリー & 境界線漏れ防止画像塗りつぶしマップ
 with tab1:
     st.subheader("📈 会社毎の現状 vs 改正後（シミュレーション）サマリー")
     
@@ -273,17 +273,17 @@ with tab1:
         img_bgr = cv2.imread(map_img_path)
         h, w, _ = img_bgr.shape
         
-        # 色定義 (BGR) - 元の黒文字消去のためやや濃いめの発色
+        # 色定義 (BGR)
         BGR_MAP = {
-            'A社': (80, 80, 230),    # 濃いめの赤
-            'B社': (230, 140, 70),   # 濃いめの青
-            'C社': (100, 190, 90),   # 濃いめの緑
-            'なし': (220, 220, 220)  # 灰色
+            'A社': (100, 100, 240),  # 赤系
+            'B社': (240, 150, 80),   # 青系
+            'C社': (120, 200, 100),  # 緑系
+            'なし': (235, 235, 235)  # 白・薄灰
         }
         
         mask = np.zeros((h + 2, w + 2), np.uint8)
         
-        # 1. 範囲許容差を拡大（75,75,75）して元の黒文字も含めてキレイに塗りつぶし
+        # 黒い境界線を越えて外へ漏れ出さないよう、許容差を15に厳密設定
         for c_name, seed in CITY_SEEDS.items():
             info = map_status_dict.get(c_name, {'一括担当': 'なし', '個別選択': []})
             bulk = info['一括担当']
@@ -291,14 +291,14 @@ with tab1:
             
             fill_bgr = BGR_MAP.get(bulk, (245, 245, 245))
             if bulk == 'なし' and len(indivs) > 0:
-                fill_bgr = (220, 220, 220)
+                fill_bgr = (235, 235, 235)
                 
             x, y = seed[0], seed[1]
             if 0 <= x < w and 0 <= y < h:
-                # 許容幅を拡大し黒文字を塗りつぶして消去
-                cv2.floodFill(img_bgr, mask, (x, y), fill_bgr, (75, 75, 75), (75, 75, 75), cv2.FLOODFILL_FIXED_RANGE)
+                # 境界線（黒線）を突抜けない安全な許容幅（15, 15, 15）
+                cv2.floodFill(img_bgr, mask, (x, y), fill_bgr, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
                 
-                # ドット描画（個別選択時のみ）
+                # ドット描画（個別選択時）
                 if len(indivs) > 0:
                     for d_idx, comp_indiv in enumerate(indivs):
                         dot_bgr = BGR_MAP.get(comp_indiv, (0, 0, 0))
@@ -306,7 +306,7 @@ with tab1:
                         cv2.circle(img_bgr, (int(dot_x), y), 6, (255, 255, 255), -1)
                         cv2.circle(img_bgr, (int(dot_x), y), 5, dot_bgr, -1)
 
-        # 2. 余白（グレーエリア）の自動クロップ（トリミング）
+        # 画像外枠の余白（背景色）のみをクロップ
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         gray_img = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
         
