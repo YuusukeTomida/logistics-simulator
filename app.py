@@ -37,7 +37,7 @@ except Exception as e:
     st.error("データの読み込みに失敗しました。A, B, C シートが含まれるExcelファイルであることを確認してください。")
     st.stop()
 
-# 埼玉県72市区町村の白地図画像上の内部塗りつぶし開始座標（シードポイント X, Y）
+# 埼玉県72市区町村の白地図画像上の代表領域座標 (X, Y)
 CITY_SEEDS = {
     'さいたま市西区': (715, 370), 'さいたま市北区': (756, 355), 'さいたま市大宮区': (748, 380),
     'さいたま市見沼区': (782, 365), 'さいたま市中央区': (738, 395), 'さいたま市桜区': (718, 410),
@@ -211,7 +211,7 @@ for idx, r in edited_df.iterrows():
 
 sim_df = pd.DataFrame(active_records) if len(active_records) > 0 else pd.DataFrame()
 
-# タブ1: サマリー & マップ描画
+# タブ1: サマリー & 高信頼境界ラベルペイントマップ
 with tab1:
     st.subheader("📈 会社毎の現状 vs 改正後（シミュレーション）サマリー")
     
@@ -270,76 +270,81 @@ with tab1:
         src_img = cv2.imread(map_img_path)
         h, w, _ = src_img.shape
         
-        # 白黒反転処理（背景：黒→白 255, 境界線：灰色/緑線→濃いグレー 60,70,85）
+        # 1. 境界線の二値化と線強調
         gray = cv2.cvtColor(src_img, cv2.COLOR_BGR2GRAY)
-        inv_bgr = np.full_like(src_img, 255)
+        line_bin = (gray > 40).astype(np.uint8) * 255
         
-        # 境界線（明度が高めの線ピクセル）を抽出して線描画
-        line_mask = (gray > 40)
-        # 境界線を少し太く補強して完全密閉
+        # 3x3カーネルで境界線を完全密閉（膨張）
         kernel = np.ones((3, 3), np.uint8)
-        line_mask_dilated = cv2.dilate(line_mask.astype(np.uint8), kernel, iterations=1) > 0
-        inv_bgr[line_mask_dilated] = (60, 70, 85)
+        dilated_lines = cv2.dilate(line_bin, kernel, iterations=1)
         
-        # OpenCV (BGR) でのカラーマップ完全定義（要件②）
-        # A社 → 🟥 赤 (BGR: 68, 68, 239)
-        # B社 → 🟦 青 (BGR: 246, 130, 59)
-        # C社 → 🟩 緑 (BGR: 129, 185, 16)
-        # なし → ⚪ 灰 (BGR: 220, 225, 230)
-        BGR_MAP = {
-            'A社': (68, 68, 239),
-            'B社': (246, 130, 59),
-            'C社': (129, 185, 16),
-            'なし': (220, 225, 230)
+        # 2. 閉領域（接続成分）を分離・ラベル付与
+        white_areas = (dilated_lines == 0).astype(np.uint8)
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(white_areas)
+        
+        # 画面左上 (0,0) が属する「県外背景領域」のラベルID特定
+        outer_bg_label = labels[0, 0]
+        
+        # 3. 出力用キャンバス（純白背景 + 濃いグレー境界線）
+        # 正しい RGB カラーマップ定義
+        RGB_MAP = {
+            'A社': (239, 68, 68),    # 赤 (A社)
+            'B社': (59, 130, 246),   # 青 (B社)
+            'C社': (16, 185, 129),   # 緑 (C社)
+            'なし': (220, 225, 230)  # 灰
         }
         
-        # ★【核心修正】埼玉県外（左上等の背景領域）のペイント保護用マスク★
-        bg_protection_mask = np.zeros((h + 2, w + 2), np.uint8)
-        # 画面左上 (0,0) の背景から広がっている領域を「値=1（ペイント保護領域）」に設定
-        cv2.floodFill(inv_bgr.copy(), bg_protection_mask, (0, 0), (255, 255, 255), (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
+        canvas_rgb = np.full((h, w, 3), 255, dtype=np.uint8)
+        canvas_rgb[dilated_lines == 255] = (60, 70, 85) # 濃いグレー境界線
         
-        # 1. 各72市区町村の閉領域を個別にペイント
-        for c_name, seed in CITY_SEEDS.items():
+        # 4. 全72市区町村の領域を漏れなくダイレクトにペイント描画
+        dot_draw_list = []
+        
+        for c_name, (sx, sy) in CITY_SEEDS.items():
             info = map_status_dict.get(c_name, {'一括担当': 'なし', '個別選択': []})
             bulk = info['一括担当']
             indivs = info['個別選択']
             
-            fill_bgr = BGR_MAP.get(bulk, (220, 225, 230))
+            fill_rgb = RGB_MAP.get(bulk, (220, 225, 230))
             if bulk == 'なし' and len(indivs) > 0:
-                fill_bgr = (220, 225, 230)
+                fill_rgb = (220, 225, 230)
                 
-            x, y = seed[0], seed[1]
-            if 0 <= x < w and 0 <= y < h:
-                # シード位置が濃い境界線上に接触している場合は白地エリアへ退避
-                if np.mean(inv_bgr[y, x]) < 150:
-                    found = False
-                    for dy in range(-7, 8, 2):
-                        for dx in range(-7, 8, 2):
-                            nx, ny = x + dx, y + dy
-                            if 0 <= nx < w and 0 <= ny < h and np.mean(inv_bgr[ny, nx]) > 200:
-                                x, y = nx, ny
-                                found = True
-                                break
-                        if found: break
+            if 0 <= sx < w and 0 <= sy < h:
+                lbl = labels[sy, sx]
+                # シードが線上に接触している場合は周囲から閉領域のラベルを探索
+                if lbl == 0 or lbl == outer_bg_label:
+                    found_lbl = 0
+                    for r in range(1, 10):
+                        for dy in range(-r, r+1):
+                            for dx in range(-r, r+1):
+                                nx, ny = sx + dx, sy + dy
+                                if 0 <= nx < w and 0 <= ny < h:
+                                    l = labels[ny, nx]
+                                    if l != 0 and l != outer_bg_label:
+                                        found_lbl = l
+                                        break
+                            if found_lbl != 0: break
+                        if found_lbl != 0: break
+                    lbl = found_lbl
                 
-                # ★解決策★ bg_protection_mask のクローン（.copy()）を渡すことで、
-                # 前の市町村のペイントが次の市町村のペイントを誤ってブロックしないようにする！
-                current_mask = bg_protection_mask.copy()
-                
-                # ペイント実行
-                cv2.floodFill(inv_bgr, current_mask, (x, y), fill_bgr, (20, 20, 20), (20, 20, 20), cv2.FLOODFILL_FIXED_RANGE)
-                
-                # ドット描画（個別選択時）
+                # 特定した領域ラベルの色を一括塗りつぶし（漏れ・不発ゼロ）
+                if lbl != 0 and lbl != outer_bg_label:
+                    canvas_rgb[labels == lbl] = fill_rgb
+                    
+                # ドット描画用データ記録
                 if len(indivs) > 0:
-                    for d_idx, comp_indiv in enumerate(indivs):
-                        dot_bgr = BGR_MAP.get(comp_indiv, (0, 0, 0))
-                        dot_x = x + (d_idx - (len(indivs)-1)/2.0) * 16
-                        cv2.circle(inv_bgr, (int(dot_x), y), 7, (255, 255, 255), -1)
-                        cv2.circle(inv_bgr, (int(dot_x), y), 6, dot_bgr, -1)
+                    dot_draw_list.append((sx, sy, indivs))
 
-        # 2. 余白を自動クロップして画面いっぱいに高品質表示
-        img_rgb = cv2.cvtColor(inv_bgr, cv2.COLOR_BGR2RGB)
-        gray_check = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
+        # ドット描画（個別選択時）
+        for (sx, sy, indivs) in dot_draw_list:
+            for d_idx, comp_indiv in enumerate(indivs):
+                dot_rgb = RGB_MAP.get(comp_indiv, (0, 0, 0))
+                dot_x = sx + (d_idx - (len(indivs)-1)/2.0) * 16
+                cv2.circle(canvas_rgb, (int(dot_x), sy), 7, (255, 255, 255), -1)
+                cv2.circle(canvas_rgb, (int(dot_x), sy), 6, dot_rgb, -1)
+
+        # 5. 県外の背景部分をトリミング（余白調整）して Fit 表示
+        gray_check = cv2.cvtColor(canvas_rgb, cv2.COLOR_RGB2GRAY)
         non_bg = np.where(gray_check < 250)
         
         if len(non_bg[0]) > 0:
@@ -350,9 +355,9 @@ with tab1:
             crop_max_y = min(h, max_y + pad)
             crop_min_x = max(0, min_x - pad)
             crop_max_x = min(w, max_x + pad)
-            cropped_img = img_rgb[crop_min_y:crop_max_y, crop_min_x:crop_max_x]
+            cropped_img = canvas_rgb[crop_min_y:crop_max_y, crop_min_x:crop_max_x]
         else:
-            cropped_img = img_rgb
+            cropped_img = canvas_rgb
 
         st.image(cropped_img, use_container_width=True)
     else:
