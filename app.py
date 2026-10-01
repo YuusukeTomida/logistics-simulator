@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import folium
-from streamlit_folium import st_folium
 
 # 1. ページ基本設定
 st.set_page_config(
@@ -36,29 +34,6 @@ try:
 except Exception as e:
     st.error("データの読み込みに失敗しました。A, B, C シートが含まれるExcelファイルであることを確認してください。")
     st.stop()
-
-# 埼玉県72市区町村の正確な役場/中心座標（緯度・経度）データ
-CITY_COORDS = {
-    'さいたま市西区': [35.916, 139.582], 'さいたま市北区': [35.938, 139.620], 'さいたま市大宮区': [35.906, 139.624],
-    'さいたま市見沼区': [35.933, 139.660], 'さいたま市中央区': [35.888, 139.621], 'さいたま市桜区': [35.862, 139.610],
-    'さいたま市浦和区': [35.871, 139.653], 'さいたま市南区': [35.845, 139.667], 'さいたま市緑区': [35.872, 139.700],
-    'さいたま市岩槻区': [35.950, 139.692], '川越市': [35.925, 139.485], '熊谷市': [36.147, 139.388],
-    '川口市': [35.807, 139.724], '行田市': [36.139, 139.455], '秩父市': [35.991, 139.082], '所沢市': [35.799, 139.469],
-    '飯能市': [35.856, 139.320], '加須市': [36.126, 139.598], '本庄市': [36.241, 139.188], '東松山市': [36.041, 139.399],
-    '春日部市': [35.975, 139.752], '狭山市': [35.854, 139.412], '羽生市': [36.171, 139.544], '鴻巣市': [36.060, 139.516],
-    '深谷市': [36.197, 139.281], '上尾市': [35.977, 139.593], '草加市': [35.828, 139.802], '越谷市': [35.791, 139.791],
-    '蕨市': [35.828, 139.682], '戸田市': [35.811, 139.678], '入間市': [35.836, 139.388], '朝霞市': [35.815, 139.593],
-    '志木市': [35.824, 139.576], '和光市': [35.781, 139.605], '新座市': [35.796, 139.556], '桶川市': [36.002, 139.557],
-    '久喜市': [36.062, 139.667], '北本市': [36.031, 139.531], '八潮市': [35.822, 139.839], '富士見市': [35.856, 139.549],
-    '三郷市': [35.830, 139.872], '蓮田市': [35.981, 139.655], '坂戸市': [35.957, 139.396], '幸手市': [36.075, 139.725],
-    '鶴ヶ島市': [35.932, 139.395], '日高市': [35.892, 139.339], '吉川市': [35.891, 139.842], 'ふじみ野市': [35.879, 139.521],
-    '白岡市': [36.018, 139.663], '伊奈町': [35.998, 139.620], '三芳町': [35.833, 139.526], '毛呂山町': [35.942, 139.309],
-    '越生町': [35.963, 139.298], '滑川町': [36.046, 139.382], '嵐山町': [36.045, 139.333], '小川町': [36.058, 139.261],
-    '川島町': [35.986, 139.481], '吉見町': [36.041, 139.450], '鳩山町': [35.983, 139.328], 'ときがわ町': [36.001, 139.278],
-    '横瀬町': [35.981, 139.102], '皆野町': [36.071, 139.096], '長瀞町': [36.115, 139.111], '小鹿野町': [36.018, 138.989],
-    '東秩父村': [36.059, 139.189], '美里町': [36.182, 139.186], '神川町': [36.183, 139.096], '上里町': [36.252, 139.138],
-    '寄居町': [36.118, 139.194], '宮代町': [36.024, 139.725], '杉戸町': [36.028, 139.791], '松伏町': [35.931, 139.822]
-}
 
 # 3. データ整理・統合
 rows = []
@@ -217,7 +192,7 @@ for idx, r in edited_df.iterrows():
 
 sim_df = pd.DataFrame(active_records) if len(active_records) > 0 else pd.DataFrame()
 
-# タブ1: サマリー & 国土地理院風・白地図マップ
+# タブ1: サマリー & 埼玉県市町村白地図イラスト表示
 with tab1:
     st.subheader("📈 会社毎の現状 vs 改正後（シミュレーション）サマリー")
     
@@ -265,107 +240,32 @@ with tab1:
     )
 
     st.markdown("---")
-    st.subheader("🗺️ 埼玉県 市町村別受持選択 マップ（国土地理院・白地図スタイル）")
+    st.subheader("🗺️ 埼玉県 市町村別受持選択 白地図（イラストマップ）")
     st.caption("塗り分け：一括担当（赤: A社, 青: B社, 緑: C社, 灰: なし） / ドット：個別選択された会社の色")
 
-    # 国土地理院（淡色地図）またはOpenStreetMap（APIキー不要の公開タイル）で埼玉県を表示
-    m = folium.Map(
-        location=[35.98, 139.40],
-        zoom_start=9,
-        tiles="https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png",
-        attr="国土地理院"
-    )
-
+    # 埼玉県72市区町村の白地図グリッド配置（Craftmap/白地図風）
     COLOR_MAP = {
         'A社': '#EF4444',
         'B社': '#3B82F6',
         'C社': '#10B981',
-        'なし': '#94A3B8'
+        'なし': '#E2E8F0'
     }
 
-    # 各市町村の位置に国土地理院地図上で綺麗に色分けされた円（バブル）を表示
-    for c_name, coords in CITY_COORDS.items():
+    # 各市町村カード描画HTMLの作成
+    cols = st.columns(6)
+    for idx, r in base_df.iterrows():
+        c_name = r['市区町村名']
         info = map_status_dict.get(c_name, {'一括担当': 'なし', '個別選択': []})
         bulk = info['一括担当']
         indivs = info['個別選択']
         
-        fill_col = COLOR_MAP.get(bulk, '#94A3B8')
-        if bulk == 'なし' and len(indivs) > 0:
-            fill_col = '#94A3B8'
-            
-        indiv_str = ', '.join(indivs) if len(indivs) > 0 else 'なし'
+        bg_col = COLOR_MAP.get(bulk, '#F1F5F9')
+        text_col = '#FFFFFF' if bulk in ['A社', 'B社', 'C社'] else '#1E293B'
         
-        # 市町村の領域を模したカラーマーカー
-        folium.CircleMarker(
-            location=coords,
-            radius=15,
-            color="#334155",
-            weight=1.5,
-            fill=True,
-            fill_color=fill_col,
-            fill_opacity=0.8,
-            popup=str(c_name) + " | 一括: " + str(bulk) + " | 個別: " + str(indiv_str),
-            tooltip=str(c_name)
-        ).add_to(m)
-        
-        # 個別選択時のドット表示
-        if len(indivs) > 0:
-            for d_idx, comp_indiv in enumerate(indivs):
-                dot_color = COLOR_MAP.get(comp_indiv, '#000000')
-                offset_lat = coords[0] + (d_idx - (len(indivs)-1)/2.0) * 0.012
-                folium.CircleMarker(
-                    location=[offset_lat, coords[1]],
-                    radius=5,
-                    color='#FFFFFF',
-                    weight=1,
-                    fill=True,
-                    fill_color=dot_color,
-                    fill_opacity=1.0,
-                    popup=str(c_name) + " - 個別: " + str(comp_indiv),
-                    tooltip=str(c_name) + " (" + str(comp_indiv) + ")"
-                ).add_to(m)
+        # ドットバッジHTML
+        dots_html = ""
+        for comp_indiv in indivs:
+            dot_c = COLOR_MAP.get(comp_indiv, '#000000')
+            dots_html += f''
 
-    st_folium(m, width="100%", height=550)
-
-# タブ2: 会社別 & 営業所別 詳細集計
-with tab2:
-    st.subheader("🏢 会社別 集計（自社配達 vs 外部委託）")
-    st.caption("※ 「（委託）」指定の地域は区分して集計しています。")
-    
-    if not sim_df.empty:
-        comp_sub_summary = sim_df.groupby(['会社表示']).agg(
-            担当件数=('市区町村コード', 'count'),
-            合計配達重量_t=('重量_t', 'sum'),
-            平均配送距離_km=('距離_km', 'mean'),
-            合計トンキロ=('トンキロ', 'sum')
-        ).reset_index().rename(columns={'会社表示': '会社区分'})
-        
-        st.dataframe(
-            comp_sub_summary.style.format({
-                '合計配達重量_t': '{:,.2f}', '平均配送距離_km': '{:.2f}', '合計トンキロ': '{:,.2f}'
-            }),
-            use_container_width=True, hide_index=True
-        )
-    else:
-        st.info("データが未選択です。")
-
-    st.markdown("---")
-    st.subheader("🏬 営業所別 集計（自社配達 vs 外部委託）")
-    st.caption("※ 営業所ごとに「（委託）」区分で行を分けて表示しています。")
-    
-    if not sim_df.empty:
-        off_sub_summary = sim_df.groupby(['担当会社', '営業所表示']).agg(
-            担当件数=('市区町村コード', 'count'),
-            合計配達重量_t=('重量_t', 'sum'),
-            平均配送距離_km=('距離_km', 'mean'),
-            合計トンキロ=('トンキロ', 'sum')
-        ).reset_index().rename(columns={'担当会社': '会社', '営業所表示': '営業所区分'})
-        
-        st.dataframe(
-            off_sub_summary.style.format({
-                '合計配達重量_t': '{:,.2f}', '平均配送距離_km': '{:.2f}', '合計トンキロ': '{:,.2f}'
-            }),
-            use_container_width=True, hide_index=True
-        )
-    else:
-        st.info("データが未選択です。")
+        card_html = f"""
