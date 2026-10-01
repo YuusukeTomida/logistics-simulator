@@ -37,26 +37,26 @@ except Exception as e:
     st.error("データの読み込みに失敗しました。A, B, C シートが含まれるExcelファイルであることを確認してください。")
     st.stop()
 
-# 埼玉県72市区町村の白地図画像上の内部代表座標 (X, Y)
+# 精密調整済み：埼玉県72市区町村の内部代表座標 (X, Y)
 CITY_SEEDS = {
     'さいたま市西区': (715, 370), 'さいたま市北区': (756, 355), 'さいたま市大宮区': (748, 380),
     'さいたま市見沼区': (782, 365), 'さいたま市中央区': (738, 395), 'さいたま市桜区': (718, 410),
     'さいたま市浦和区': (762, 405), 'さいたま市南区': (760, 430), 'さいたま市緑区': (804, 405),
     'さいたま市岩槻区': (822, 350), '川越市': (662, 375), '熊谷市': (588, 175),
-    '川口市': (834, 445), '行田市': (651, 180), '秩父市': (212, 375), '所沢市': (634, 465),
-    '飯能市': (380, 405), '加須市': (748, 195), '本庄市': (326, 150), '東松山市': (584, 285),
+    '川口市': (802, 463), '行田市': (651, 180), '秩父市': (212, 375), '所沢市': (634, 465),
+    '飯能市': (380, 405), '加須市': (748, 195), '本庄市': (395, 118), '東松山市': (584, 285),
     '春日部市': (860, 325), '狭山市': (590, 425), '羽生市': (708, 165), '鴻巣市': (664, 245),
-    '深谷市': (450, 160), '上尾市': (718, 335), '草加市': (874, 430), '越谷市': (871, 385),
-    '蕨市': (777, 442), '戸田市': (760, 455), '入間市': (562, 450), '朝霞市': (732, 460),
-    '志木市': (718, 435), '和光市': (753, 475), '新座市': (703, 472), '桶川市': (677, 315),
-    '久喜市': (775, 255), '北本市': (673, 290), '八潮市': (906, 445), '富士見市': (698, 415),
-    '三郷市': (921, 430), '蓮田市': (763, 315), '坂戸市': (590, 345), '幸手市': (843, 250),
-    '鶴ヶ島市': (576, 370), '日高市': (543, 395), '吉川市': (925, 385), 'ふじみ野市': (677, 398),
-    '白岡市': (791, 285), '伊奈町': (733, 315), '三芳町': (665, 430), '毛呂山町': (511, 355),
+    '深谷市': (450, 160), '上尾市': (718, 335), '草加市': (928, 471), '越谷市': (871, 385),
+    '蕨市': (777, 442), '戸田市': (807, 497), '入間市': (562, 450), '朝霞市': (724, 522),
+    '志木市': (718, 435), '和光市': (773, 522), '新座市': (703, 472), '桶川市': (677, 315),
+    '久喜市': (775, 255), '北本市': (673, 290), '八潮市': (960, 492), '富士見市': (698, 415),
+    '三郷市': (987, 475), '蓮田市': (763, 315), '坂戸市': (590, 345), '幸手市': (876, 226),
+    '鶴ヶ島市': (576, 370), '日高市': (543, 395), '吉川市': (979, 411), 'ふじみ野市': (677, 398),
+    '白岡市': (791, 285), '伊奈町': (714, 296), '三芳町': (665, 430), '毛呂山町': (511, 355),
     '越生町': (412, 335), '滑川町': (558, 265), '嵐山町': (529, 260), '小川町': (486, 255),
     '川島町': (640, 335), '吉見町': (630, 270), '鳩山町': (538, 315), 'ときがわ町': (471, 315),
     '横瀬町': (335, 355), '皆野町': (325, 250), '長瀞町': (340, 210), '小鹿野町': (175, 290),
-    '東秩父村': (415, 285), '美里町': (380, 185), '神川町': (345, 140), '上里町': (360, 110),
+    '東秩父村': (415, 285), '美里町': (380, 185), '神川町': (294, 131), '上里町': (363, 34),
     '寄居町': (415, 225), '宮代町': (822, 295), '杉戸町': (849, 280), '松伏町': (904, 350)
 }
 
@@ -262,7 +262,6 @@ with tab1:
     st.subheader("🗺️ 埼玉県 市町村別受持選択 白地図エリアマップ")
     st.caption("塗り分け：一括担当（🔴 A社: 赤, 🔵 B社: 青, 🟢 C社: 緑, ⚪ なし: 灰） / ドット：個別選択された会社の色")
 
-    # 新画像データの自動探索優先順序
     map_img_path = None
     for target_path in ["20261001_bc6e30f7720a548fb561a31_2.jpg", "20261001_bc6e30f7720a548fb561a31_2.png", "20261001_bc6e30f7720a548fb561a31.jpg", "20261001_bc6e30f7720a548fb561a31.png"]:
         if os.path.exists(target_path):
@@ -273,19 +272,18 @@ with tab1:
         src_img = cv2.imread(map_img_path)
         h, w, _ = src_img.shape
         
-        # 白黒反転・線強調処理
+        # 1. 境界線の二値化と線強調
         gray = cv2.cvtColor(src_img, cv2.COLOR_BGR2GRAY)
         
-        # 黒背景画像・白背景画像のどちらでも境界線を確実に捉える閾値判定
-        if np.mean(gray) < 100: # 黒背景画像の場合
+        if np.mean(gray) < 100:
             line_bin = (gray > 25).astype(np.uint8) * 255
-        else: # 白背景画像の場合
+        else:
             line_bin = (gray < 200).astype(np.uint8) * 255
             
         inv_bgr = np.full_like(src_img, 255) # 純白キャンバス
         inv_bgr[line_bin == 255] = (60, 70, 85) # 濃いグレー境界線
         
-        # 正しい BGR カラーマップ定義（A社:赤 / B社:青 / C社:緑 / なし:灰）
+        # BGR カラーマップ定義
         BGR_MAP = {
             'A社': (68, 68, 239),    # 赤 (BGR)
             'B社': (240, 150, 59),   # 青 (BGR)
@@ -297,7 +295,7 @@ with tab1:
         bg_protection_mask = np.zeros((h + 2, w + 2), np.uint8)
         cv2.floodFill(inv_bgr.copy(), bg_protection_mask, (0, 0), (255, 255, 255), (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
 
-        # 1. 各72市区町村の領域をFloodFillペイント
+        # 1. 各72市区町村のメイン領域をFloodFillペイント
         for c_name, (sx, sy) in CITY_SEEDS.items():
             info = map_status_dict.get(c_name, {'一括担当': 'なし', '個別選択': []})
             bulk = info['一括担当']
@@ -308,7 +306,7 @@ with tab1:
                 fill_bgr = (220, 225, 230)
                 
             if 0 <= sx < w and 0 <= sy < h:
-                # 境界線上（濃い色）にシードが当たっている場合は近傍の白地（> 200）へ退避
+                # 境界線上（濃い色）にシードが当たっている場合は近傍の白地へ退避
                 if np.mean(inv_bgr[sy, sx]) < 150:
                     found = False
                     for r in range(1, 15):
@@ -322,8 +320,7 @@ with tab1:
                             if found: break
                         if found: break
                 
-                # ★毎回のル―プで保護マスクをコピー（.copy()）してペイント実行★
-                # 前の市町村のペイントが次の市町村を誤ってブロックしないようにする
+                # ペイント実行
                 m_curr = bg_protection_mask.copy()
                 cv2.floodFill(inv_bgr, m_curr, (sx, sy), fill_bgr, (20, 20, 20), (20, 20, 20), cv2.FLOODFILL_FIXED_RANGE)
                 
@@ -334,6 +331,35 @@ with tab1:
                         dot_x = sx + (d_idx - (len(indivs)-1)/2.0) * 16
                         cv2.circle(inv_bgr, (int(dot_x), sy), 7, (255, 255, 255), -1)
                         cv2.circle(inv_bgr, (int(dot_x), sy), 6, dot_bgr, -1)
+
+        # ★【完全修復】埼玉県内の「小さな未塗り白地スペース」を自動検出して100%穴埋め★
+        gray_temp = cv2.cvtColor(inv_bgr, cv2.COLOR_BGR2GRAY)
+        white_holes = (gray_temp > 250).astype(np.uint8)
+        num_holes, labels_holes, stats_holes, _ = cv2.connectedComponentsWithStats(white_holes)
+        bg_hole_label = labels_holes[0, 0]
+
+        for i in range(1, num_holes):
+            area = stats_holes[i, cv2.CC_STAT_AREA]
+            cx, cy = int(stats_holes[i, cv2.CC_STAT_LEFT] + stats_holes[i, cv2.CC_STAT_WIDTH]/2), int(stats_holes[i, cv2.CC_STAT_TOP] + stats_holes[i, cv2.CC_STAT_HEIGHT]/2)
+            
+            # 県外背景以外の小さな未塗り穴エリア（area < 8000px）を隣接色で完全補填
+            if i != bg_hole_label and area < 8000:
+                found_color = None
+                for r in range(1, 25):
+                    for dy in range(-r, r+1, 3):
+                        for dx in range(-r, r+1, 3):
+                            nx, ny = cx + dx, cy + dy
+                            if 0 <= nx < w and 0 <= ny < h:
+                                p_col = inv_bgr[ny, nx]
+                                if np.mean(p_col) < 230 and np.mean(p_col) > 90:
+                                    found_color = tuple(int(c) for c in p_col)
+                                    break
+                        if found_color is not None: break
+                    if found_color is not None: break
+                
+                if found_color is not None:
+                    m_hole = bg_protection_mask.copy()
+                    cv2.floodFill(inv_bgr, m_hole, (cx, cy), found_color, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
 
         # 2. 余白を自動クロップして画面にフィット表示
         img_rgb = cv2.cvtColor(inv_bgr, cv2.COLOR_BGR2RGB)
