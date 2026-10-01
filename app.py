@@ -37,7 +37,7 @@ except Exception as e:
     st.error("データの読み込みに失敗しました。A, B, C シートが含まれるExcelファイルであることを確認してください。")
     st.stop()
 
-# 提供画像（1024 x 564/580 px ベース）における各市区町村の内部シード座標 (X, Y)
+# 埼玉県72市区町村の内部シード座標 (X, Y)
 CITY_SEEDS = {
     'さいたま市西区': (715, 370), 'さいたま市北区': (756, 355), 'さいたま市大宮区': (748, 380),
     'さいたま市見沼区': (782, 365), 'さいたま市中央区': (738, 395), 'さいたま市桜区': (718, 410),
@@ -211,7 +211,7 @@ for idx, r in edited_df.iterrows():
 
 sim_df = pd.DataFrame(active_records) if len(active_records) > 0 else pd.DataFrame()
 
-# タブ1: サマリー & マップ描画
+# タブ1: サマリー & 白地図エリアマップ
 with tab1:
     st.subheader("📈 会社毎の現状 vs 改正後（シミュレーション）サマリー")
     
@@ -260,7 +260,7 @@ with tab1:
 
     st.markdown("---")
     st.subheader("🗺️ 埼玉県 市町村別受持選択 白地図エリアマップ")
-    st.caption("塗り分け：一括担当（赤: A社, 青: B社, 緑: C社, 灰: なし） / ドット：個別選択された会社の色")
+    st.caption("塗り分け：一括担当（🔴 A社: 赤, 🔵 B社: 青, 🟢 C社: 緑, ⚪ なし: 灰） / ドット：個別選択された会社の色")
 
     map_img_path = "20261001_bc6e30f7720a548fb561a31.png"
     if not os.path.exists(map_img_path):
@@ -270,42 +270,49 @@ with tab1:
         src_img = cv2.imread(map_img_path)
         h, w, _ = src_img.shape
         
-        # 白黒反転処理（背景：黒→白、境界線：灰色→濃いグレー）
+        # 白黒反転処理（背景：黒→白 255, 境界線：灰色→濃いグレー 70,80,95）
         gray = cv2.cvtColor(src_img, cv2.COLOR_BGR2GRAY)
-        inv_bgr = np.full_like(src_img, 255) # 純白背景
+        inv_bgr = np.full_like(src_img, 255)
         line_mask = gray > 60
-        inv_bgr[line_mask] = (70, 80, 95)    # 濃いグレー境界線
+        inv_bgr[line_mask] = (70, 80, 95)
         
-        # カラーマップ定義 (BGR)
+        # 正しい BGR カラーマップ定義（要件②）
+        # A社 → 赤 (B:90, G:90, R:240)
+        # B社 → 青 (B:240, G:150, R:70)
+        # C社 → 緑 (B:100, G:200, R:90)
+        # なし → 灰 (B:220, G:220, R:220)
         BGR_MAP = {
-            'A社': (90, 90, 240),    # 赤系
-            'B社': (240, 150, 70),   # 青系
-            'C社': (100, 200, 90),   # 緑系
-            'なし': (245, 245, 245)  # 白・薄灰
+            'A社': (90, 90, 240),
+            'B社': (240, 150, 70),
+            'C社': (100, 200, 90),
+            'なし': (220, 220, 220)
         }
         
-        # ★【重要修正】埼玉県外（左上等の背景領域）をFloodFillペイント保護するマスク作成★
-        mask_protection = np.zeros((h + 2, w + 2), np.uint8)
-        # (0,0)の背景から到達できる範囲（県外）を1としてマークしてペイント禁止にする
-        cv2.floodFill(inv_bgr.copy(), mask_protection, (0, 0), (255, 255, 255), (20, 20, 20), (20, 20, 20), cv2.FLOODFILL_FIXED_RANGE)
+        # ★【重要修正】埼玉県外（背景領域）をFloodFillペイント保護するマスクの作成★
+        mask_bg = np.zeros((h + 2, w + 2), np.uint8)
+        # 画面左上 (0,0) の背景部分から到達できる領域をマスク値 1（ペイント保護エリア）として特定
+        cv2.floodFill(inv_bgr.copy(), mask_bg, (0, 0), (255, 255, 255), (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
+
+        # 各市町村をペイントするためのマスク（背景保護エリア mask_bg をベースにする）
+        mask_cities = mask_bg.copy()
         
-        # 1. 各市町村の領域をペイント（県外保護マスク適用）
+        # 1. 市町村ごとの閉領域の塗りつぶし（要件①, ②）
         for c_name, seed in CITY_SEEDS.items():
             info = map_status_dict.get(c_name, {'一括担当': 'なし', '個別選択': []})
             bulk = info['一括担当']
             indivs = info['個別選択']
             
-            fill_bgr = BGR_MAP.get(bulk, (245, 245, 245))
+            fill_bgr = BGR_MAP.get(bulk, (220, 220, 220))
             if bulk == 'なし' and len(indivs) > 0:
-                fill_bgr = (245, 245, 245)
+                fill_bgr = (220, 220, 220)
                 
             x, y = seed[0], seed[1]
             if 0 <= x < w and 0 <= y < h:
-                # 線上に当たっている場合は近傍の白地へ自動退避
+                # シードが濃い境界線上に重なっている場合は白地へ自動回避
                 if np.mean(inv_bgr[y, x]) < 150:
                     found = False
-                    for dy in range(-5, 6):
-                        for dx in range(-5, 6):
+                    for dy in range(-6, 7):
+                        for dx in range(-6, 7):
                             nx, ny = x + dx, y + dy
                             if 0 <= nx < w and 0 <= ny < h and np.mean(inv_bgr[ny, nx]) > 200:
                                 x, y = nx, ny
@@ -313,8 +320,8 @@ with tab1:
                                 break
                         if found: break
                 
-                # FloodFill ペイント実行（mask_protectionにより県外への漏れを完全にガード）
-                cv2.floodFill(inv_bgr, mask_protection, (x, y), fill_bgr, (25, 25, 25), (25, 25, 25), cv2.FLOODFILL_FIXED_RANGE)
+                # ペイント実行（背景保護マスク mask_cities 適用により県外への漏れを完全にガード）
+                cv2.floodFill(inv_bgr, mask_cities, (x, y), fill_bgr, (25, 25, 25), (25, 25, 25), cv2.FLOODFILL_FIXED_RANGE)
                 
                 # ドット描画（個別選択時）
                 if len(indivs) > 0:
@@ -324,7 +331,7 @@ with tab1:
                         cv2.circle(inv_bgr, (int(dot_x), y), 7, (255, 255, 255), -1)
                         cv2.circle(inv_bgr, (int(dot_x), y), 6, dot_bgr, -1)
 
-        # 2. 不要な余白領域を自動クロップ（全自治体が綺麗に収まる範囲）
+        # 2. 余白部分を切り落とさず綺麗にトリミング表示
         img_rgb = cv2.cvtColor(inv_bgr, cv2.COLOR_BGR2RGB)
         gray_check = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
         non_bg = np.where(gray_check < 250)
