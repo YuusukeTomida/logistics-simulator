@@ -37,7 +37,7 @@ except Exception as e:
     st.error("データの読み込みに失敗しました。A, B, C シートが含まれるExcelファイルであることを確認してください。")
     st.stop()
 
-# 精密調整済み：埼玉県72市区町村の内部代表座標 (X, Y)
+# 精密調整済み：埼玉県72市区町村の内部領域シード座標 (X, Y)
 CITY_SEEDS = {
     'さいたま市西区': (715, 370), 'さいたま市北区': (756, 355), 'さいたま市大宮区': (748, 380),
     'さいたま市見沼区': (782, 365), 'さいたま市中央区': (738, 395), 'さいたま市桜区': (718, 410),
@@ -56,7 +56,7 @@ CITY_SEEDS = {
     '越生町': (412, 335), '滑川町': (558, 265), '嵐山町': (529, 260), '小川町': (486, 255),
     '川島町': (640, 335), '吉見町': (630, 270), '鳩山町': (538, 315), 'ときがわ町': (471, 315),
     '横瀬町': (335, 355), '皆野町': (325, 250), '長瀞町': (340, 210), '小鹿野町': (175, 290),
-    '東秩父村': (415, 285), '美里町': (380, 185), '神川町': (294, 131), '上里町': (363, 34),
+    '東秩父村': (415, 285), '美里町': (380, 185), '神川町': (300, 150), '上里町': (363, 34),
     '寄居町': (415, 225), '宮代町': (822, 295), '杉戸町': (849, 280), '松伏町': (904, 350)
 }
 
@@ -280,20 +280,28 @@ with tab1:
         else:
             line_bin = (gray < 200).astype(np.uint8) * 255
             
-        inv_bgr = np.full_like(src_img, 255) # 純白キャンバス
-        inv_bgr[line_bin == 255] = (60, 70, 85) # 濃いグレー境界線
+        # 純粋な RGB キャンバス作成
+        kernel = np.ones((3, 3), np.uint8)
+        line_bin_dilated = cv2.dilate(line_bin, kernel, iterations=1)
         
-        # BGR カラーマップ定義
-        BGR_MAP = {
-            'A社': (68, 68, 239),    # 赤 (BGR)
-            'B社': (240, 150, 59),   # 青 (BGR)
-            'C社': (129, 185, 16),   # 緑 (BGR)
-            'なし': (220, 225, 230)  # 灰 (BGR)
+        canvas_rgb = np.full((h, w, 3), 255, dtype=np.uint8)
+        canvas_rgb[line_bin_dilated == 255] = (60, 70, 85) # 濃いグレー境界線
+        
+        # ★完全固定 RGB カラーマップ定義（画面表示と100%一致）★
+        # A社 → 🟥 赤 (239, 68, 68)
+        # B社 → 🟦 青 (59, 130, 246)
+        # C社 → 🟩 緑 (16, 185, 129)
+        # なし → ⚪ 灰 (220, 225, 230)
+        RGB_MAP = {
+            'A社': (239, 68, 68),
+            'B社': (59, 130, 246),
+            'C社': (16, 185, 129),
+            'なし': (220, 225, 230)
         }
         
         # 県外（マップ外側の背景領域）ペイント保護マスク
         bg_protection_mask = np.zeros((h + 2, w + 2), np.uint8)
-        cv2.floodFill(inv_bgr.copy(), bg_protection_mask, (0, 0), (255, 255, 255), (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
+        cv2.floodFill(canvas_rgb.copy(), bg_protection_mask, (0, 0), (255, 255, 255), (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
 
         # 1. 各72市区町村のメイン領域をFloodFillペイント
         for c_name, (sx, sy) in CITY_SEEDS.items():
@@ -301,48 +309,48 @@ with tab1:
             bulk = info['一括担当']
             indivs = info['個別選択']
             
-            fill_bgr = BGR_MAP.get(bulk, (220, 225, 230))
+            fill_rgb = RGB_MAP.get(bulk, (220, 225, 230))
             if bulk == 'なし' and len(indivs) > 0:
-                fill_bgr = (220, 225, 230)
+                fill_rgb = (220, 225, 230)
                 
             if 0 <= sx < w and 0 <= sy < h:
                 # 境界線上（濃い色）にシードが当たっている場合は近傍の白地へ退避
-                if np.mean(inv_bgr[sy, sx]) < 150:
+                if np.mean(canvas_rgb[sy, sx]) < 150:
                     found = False
                     for r in range(1, 15):
                         for dy in range(-r, r+1, 2):
                             for dx in range(-r, r+1, 2):
                                 nx, ny = sx + dx, sy + dy
-                                if 0 <= nx < w and 0 <= ny < h and np.mean(inv_bgr[ny, nx]) > 200:
+                                if 0 <= nx < w and 0 <= ny < h and np.mean(canvas_rgb[ny, nx]) > 200:
                                     sx, sy = nx, ny
                                     found = True
                                     break
                             if found: break
                         if found: break
                 
-                # ペイント実行
+                # ★毎回のループで保護マスクをコピー（.copy()）してペイント実行★
                 m_curr = bg_protection_mask.copy()
-                cv2.floodFill(inv_bgr, m_curr, (sx, sy), fill_bgr, (20, 20, 20), (20, 20, 20), cv2.FLOODFILL_FIXED_RANGE)
+                cv2.floodFill(canvas_rgb, m_curr, (sx, sy), fill_rgb, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
                 
                 # ドット描画（個別選択時）
                 if len(indivs) > 0:
                     for d_idx, comp_indiv in enumerate(indivs):
-                        dot_bgr = BGR_MAP.get(comp_indiv, (0, 0, 0))
+                        dot_rgb = RGB_MAP.get(comp_indiv, (0, 0, 0))
                         dot_x = sx + (d_idx - (len(indivs)-1)/2.0) * 16
-                        cv2.circle(inv_bgr, (int(dot_x), sy), 7, (255, 255, 255), -1)
-                        cv2.circle(inv_bgr, (int(dot_x), sy), 6, dot_bgr, -1)
+                        cv2.circle(canvas_rgb, (int(dot_x), sy), 7, (255, 255, 255), -1)
+                        cv2.circle(canvas_rgb, (int(dot_x), sy), 6, dot_rgb, -1)
 
-        # ★【完全修復】埼玉県内の「小さな未塗り白地スペース」を自動検出して100%穴埋め★
-        gray_temp = cv2.cvtColor(inv_bgr, cv2.COLOR_BGR2GRAY)
+        # 2. 埼玉県内の「小さな未塗り白地スペース（微小飛地など）」を自動補填
+        gray_temp = cv2.cvtColor(canvas_rgb, cv2.COLOR_RGB2GRAY)
         white_holes = (gray_temp > 250).astype(np.uint8)
         num_holes, labels_holes, stats_holes, _ = cv2.connectedComponentsWithStats(white_holes)
         bg_hole_label = labels_holes[0, 0]
 
         for i in range(1, num_holes):
             area = stats_holes[i, cv2.CC_STAT_AREA]
-            cx, cy = int(stats_holes[i, cv2.CC_STAT_LEFT] + stats_holes[i, cv2.CC_STAT_WIDTH]/2), int(stats_holes[i, cv2.CC_STAT_TOP] + stats_holes[i, cv2.CC_STAT_HEIGHT]/2)
+            cx = int(stats_holes[i, cv2.CC_STAT_LEFT] + stats_holes[i, cv2.CC_STAT_WIDTH]/2)
+            cy = int(stats_holes[i, cv2.CC_STAT_TOP] + stats_holes[i, cv2.CC_STAT_HEIGHT]/2)
             
-            # 県外背景以外の小さな未塗り穴エリア（area < 8000px）を隣接色で完全補填
             if i != bg_hole_label and area < 8000:
                 found_color = None
                 for r in range(1, 25):
@@ -350,7 +358,7 @@ with tab1:
                         for dx in range(-r, r+1, 3):
                             nx, ny = cx + dx, cy + dy
                             if 0 <= nx < w and 0 <= ny < h:
-                                p_col = inv_bgr[ny, nx]
+                                p_col = canvas_rgb[ny, nx]
                                 if np.mean(p_col) < 230 and np.mean(p_col) > 90:
                                     found_color = tuple(int(c) for c in p_col)
                                     break
@@ -359,11 +367,10 @@ with tab1:
                 
                 if found_color is not None:
                     m_hole = bg_protection_mask.copy()
-                    cv2.floodFill(inv_bgr, m_hole, (cx, cy), found_color, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
+                    cv2.floodFill(canvas_rgb, m_hole, (cx, cy), found_color, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
 
-        # 2. 余白を自動クロップして画面にフィット表示
-        img_rgb = cv2.cvtColor(inv_bgr, cv2.COLOR_BGR2RGB)
-        gray_check = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
+        # 3. 不要な背景余白を自動クロップしてフィット表示
+        gray_check = cv2.cvtColor(canvas_rgb, cv2.COLOR_RGB2GRAY)
         non_bg = np.where(gray_check < 250)
         
         if len(non_bg[0]) > 0:
@@ -374,9 +381,9 @@ with tab1:
             crop_max_y = min(h, max_y + pad)
             crop_min_x = max(0, min_x - pad)
             crop_max_x = min(w, max_x + pad)
-            cropped_img = img_rgb[crop_min_y:crop_max_y, crop_min_x:crop_max_x]
+            cropped_img = canvas_rgb[crop_min_y:crop_max_y, crop_min_x:crop_max_x]
         else:
-            cropped_img = img_rgb
+            cropped_img = canvas_rgb
 
         st.image(cropped_img, use_container_width=True)
     else:
