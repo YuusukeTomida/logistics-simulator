@@ -192,7 +192,7 @@ for idx, r in edited_df.iterrows():
 
 sim_df = pd.DataFrame(active_records) if len(active_records) > 0 else pd.DataFrame()
 
-# タブ1: サマリー & 埼玉県市町村白地図イラスト表示
+# タブ1: サマリー & 埼玉県市町村イラストマップ表示
 with tab1:
     st.subheader("📈 会社毎の現状 vs 改正後（シミュレーション）サマリー")
     
@@ -243,7 +243,6 @@ with tab1:
     st.subheader("🗺️ 埼玉県 市町村別受持選択 白地図（イラストマップ）")
     st.caption("塗り分け：一括担当（赤: A社, 青: B社, 緑: C社, 灰: なし） / ドット：個別選択された会社の色")
 
-    # 埼玉県72市区町村の白地図グリッド配置（Craftmap/白地図風）
     COLOR_MAP = {
         'A社': '#EF4444',
         'B社': '#3B82F6',
@@ -251,7 +250,7 @@ with tab1:
         'なし': '#E2E8F0'
     }
 
-    # 各市町村カード描画HTMLの作成
+    # 安全な単一行文字列結合によるHTMLグリッド生成
     cols = st.columns(6)
     for idx, r in base_df.iterrows():
         c_name = r['市区町村名']
@@ -262,10 +261,9 @@ with tab1:
         bg_col = COLOR_MAP.get(bulk, '#F1F5F9')
         text_col = '#FFFFFF' if bulk in ['A社', 'B社', 'C社'] else '#1E293B'
         
-        # ドットバッジHTML
         dots_html = ""
         for comp_indiv in indivs:
             dot_c = COLOR_MAP.get(comp_indiv, '#000000')
-            dots_html += f''
+            dots_html += ''
 
-        card_html = f"""
+        card_html = '
