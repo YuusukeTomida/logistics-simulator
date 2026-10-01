@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import cv2
-from PIL import Image, ImageDraw, ImageFont
 import os
 
 # 1. ページ基本設定
@@ -60,24 +59,6 @@ CITY_SEEDS = {
     '東秩父村': (360, 442), '美里町': [338, 328], '神川町': (308, 281), '上里町': (321, 252),
     '寄居町': [370, 368], '宮代町': (743, 451), '杉戸町': [770, 439], '松伏町': (825, 520)
 }
-
-# 日本語フォント取得関数（文字化け解消用）
-def get_japanese_font(font_size=13):
-    font_paths = [
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/ipafont-gothic/ipag.ttf",
-        "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",
-        "C:\\Windows\\Fonts\\meiryo.ttc",
-        "C:\\Windows\\Fonts\\msgothic.ttc"
-    ]
-    for path in font_paths:
-        if os.path.exists(path):
-            try:
-                return ImageFont.truetype(path, font_size)
-            except Exception:
-                pass
-    return ImageFont.load_default()
 
 # 3. データ整理・統合
 rows = []
@@ -236,7 +217,7 @@ for idx, r in edited_df.iterrows():
 
 sim_df = pd.DataFrame(active_records) if len(active_records) > 0 else pd.DataFrame()
 
-# タブ1: サマリー & 画像塗りつぶしマップ
+# タブ1: サマリー & 元文字消去・ベタ塗りマップ
 with tab1:
     st.subheader("📈 会社毎の現状 vs 改正後（シミュレーション）サマリー")
     
@@ -292,17 +273,17 @@ with tab1:
         img_bgr = cv2.imread(map_img_path)
         h, w, _ = img_bgr.shape
         
-        # 色定義 (BGR) - 鮮明なパステルカラー
+        # 色定義 (BGR) - 元の黒文字消去のためやや濃いめの発色
         BGR_MAP = {
-            'A社': (110, 110, 245),  # 赤系
-            'B社': (245, 160, 90),   # 青系
-            'C社': (130, 210, 110),  # 緑系
-            'なし': (235, 235, 235)  # 灰色
+            'A社': (80, 80, 230),    # 濃いめの赤
+            'B社': (230, 140, 70),   # 濃いめの青
+            'C社': (100, 190, 90),   # 濃いめの緑
+            'なし': (220, 220, 220)  # 灰色
         }
         
         mask = np.zeros((h + 2, w + 2), np.uint8)
         
-        # 1. 画像上の文字枠ギリギリまで白地領域を綺麗に塗りつぶし（黒文字と黒線枠を残してペイント）
+        # 1. 範囲許容差を拡大（75,75,75）して元の黒文字も含めてキレイに塗りつぶし
         for c_name, seed in CITY_SEEDS.items():
             info = map_status_dict.get(c_name, {'一括担当': 'なし', '個別選択': []})
             bulk = info['一括担当']
@@ -310,48 +291,24 @@ with tab1:
             
             fill_bgr = BGR_MAP.get(bulk, (245, 245, 245))
             if bulk == 'なし' and len(indivs) > 0:
-                fill_bgr = (235, 235, 235)
+                fill_bgr = (220, 220, 220)
                 
             x, y = seed[0], seed[1]
             if 0 <= x < w and 0 <= y < h:
-                # 許容差範囲を精密調整して白地のみを塗る
-                cv2.floodFill(img_bgr, mask, (x, y), fill_bgr, (35, 35, 35), (35, 35, 35), cv2.FLOODFILL_FIXED_RANGE)
+                # 許容幅を拡大し黒文字を塗りつぶして消去
+                cv2.floodFill(img_bgr, mask, (x, y), fill_bgr, (75, 75, 75), (75, 75, 75), cv2.FLOODFILL_FIXED_RANGE)
                 
-                # ドット描画（個別選択時）
+                # ドット描画（個別選択時のみ）
                 if len(indivs) > 0:
                     for d_idx, comp_indiv in enumerate(indivs):
                         dot_bgr = BGR_MAP.get(comp_indiv, (0, 0, 0))
                         dot_x = x + (d_idx - (len(indivs)-1)/2.0) * 14
-                        cv2.circle(img_bgr, (int(dot_x), y - 10), 6, (255, 255, 255), -1)
-                        cv2.circle(img_bgr, (int(dot_x), y - 10), 5, dot_bgr, -1)
+                        cv2.circle(img_bgr, (int(dot_x), y), 6, (255, 255, 255), -1)
+                        cv2.circle(img_bgr, (int(dot_x), y), 5, dot_bgr, -1)
 
-        # 2. 日本語フォントによる高精彩テキスト再配置（元の画像文字位置に綺麗に上書き）
+        # 2. 余白（グレーエリア）の自動クロップ（トリミング）
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        pil_img = Image.fromarray(img_rgb)
-        draw = ImageDraw.Draw(pil_img)
-        jp_font = get_japanese_font(12)
-        
-        for c_name, seed in CITY_SEEDS.items():
-            x, y = seed[0], seed[1]
-            info = map_status_dict.get(c_name, {'一括担当': 'なし', '個別選択': []})
-            bulk = info['一括担当']
-            bg_rgb = (fill_bgr[2], fill_bgr[1], fill_bgr[0]) if 'fill_bgr' in locals() else (255, 255, 255)
-            
-            # テキストサイズバウンディングボックス
-            bbox = draw.textbbox((0, 0), c_name, font=jp_font)
-            text_w = bbox[2] - bbox[0]
-            text_h = bbox[3] - bbox[1]
-            text_x = x - text_w // 2
-            text_y = y - text_h // 2
-            
-            # 要件③・④: 市町村名背景色を塗りつぶし色と一致させ、最小限の枠で元文字に重ねる
-            draw.rectangle([text_x - 2, text_y - 1, text_x + text_w + 2, text_y + text_h + 1], fill=bg_rgb)
-            # 文字（くっきり濃ネイビー）
-            draw.text((text_x, text_y), c_name, fill=(15, 23, 42), font=jp_font)
-
-        # 3. 灰色の不要な外枠余白を自動トリミング（クロップ）
-        np_img = np.array(pil_img)
-        gray_img = cv2.cvtColor(np_img, cv2.COLOR_RGB2GRAY)
+        gray_img = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
         
         non_bg_pts = np.where(gray_img < 235)
         if len(non_bg_pts[0]) > 0:
@@ -364,9 +321,9 @@ with tab1:
             crop_min_x = max(0, min_x - pad)
             crop_max_x = min(w, max_x + pad)
             
-            cropped_img = np_img[crop_min_y:crop_max_y, crop_min_x:crop_max_x]
+            cropped_img = img_rgb[crop_min_y:crop_max_y, crop_min_x:crop_max_x]
         else:
-            cropped_img = np_img
+            cropped_img = img_rgb
 
         st.image(cropped_img, use_container_width=True)
     else:
