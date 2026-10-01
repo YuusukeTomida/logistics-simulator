@@ -44,7 +44,7 @@ CITY_SEEDS = {
     'さいたま市浦和区': (762, 405), 'さいたま市南区': (760, 430), 'さいたま市緑区': (804, 405),
     'さいたま市岩槻区': (822, 350), '川越市': (662, 375), '熊谷市': (588, 175),
     '川口市': (802, 463), '行田市': (651, 180), '秩父市': (212, 375), '所沢市': (634, 465),
-    '飯能市': (380, 405), '加須市': (748, 195), '本庄市': (395, 118), '東松山市': (584, 285),
+    '飯能市': (380, 405), '加須市': (748, 195), '本庄市': (360, 115), '東松山市': (584, 285),
     '春日部市': (860, 325), '狭山市': (590, 425), '羽生市': (708, 165), '鴻巣市': (664, 245),
     '深谷市': (450, 160), '上尾市': (718, 335), '草加市': (928, 471), '越谷市': (871, 385),
     '蕨市': (777, 442), '戸田市': (807, 497), '入間市': (562, 450), '朝霞市': (724, 522),
@@ -285,13 +285,10 @@ with tab1:
         line_bin_dilated = cv2.dilate(line_bin, kernel, iterations=1)
         
         canvas_rgb = np.full((h, w, 3), 255, dtype=np.uint8)
-        canvas_rgb[line_bin_dilated == 255] = (60, 70, 85) # 濃いグレー境界線
+        # ★要件①：境界線を完全な「黒色 (0, 0, 0)」に設定★
+        canvas_rgb[line_bin_dilated == 255] = (0, 0, 0)
         
-        # ★完全固定 RGB カラーマップ定義（画面表示と100%一致）★
-        # A社 → 🟥 赤 (239, 68, 68)
-        # B社 → 🟦 青 (59, 130, 246)
-        # C社 → 🟩 緑 (16, 185, 129)
-        # なし → ⚪ 灰 (220, 225, 230)
+        # RGB カラーマップ定義
         RGB_MAP = {
             'A社': (239, 68, 68),
             'B社': (59, 130, 246),
@@ -314,7 +311,7 @@ with tab1:
                 fill_rgb = (220, 225, 230)
                 
             if 0 <= sx < w and 0 <= sy < h:
-                # 境界線上（濃い色）にシードが当たっている場合は近傍の白地へ退避
+                # 境界線上（黒色）にシードが当たっている場合は近傍の白地へ退避
                 if np.mean(canvas_rgb[sy, sx]) < 150:
                     found = False
                     for r in range(1, 15):
@@ -328,7 +325,7 @@ with tab1:
                             if found: break
                         if found: break
                 
-                # ★毎回のループで保護マスクをコピー（.copy()）してペイント実行★
+                # 保護マスクをコピー（.copy()）してペイント実行
                 m_curr = bg_protection_mask.copy()
                 cv2.floodFill(canvas_rgb, m_curr, (sx, sy), fill_rgb, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
                 
@@ -340,7 +337,7 @@ with tab1:
                         cv2.circle(canvas_rgb, (int(dot_x), sy), 7, (255, 255, 255), -1)
                         cv2.circle(canvas_rgb, (int(dot_x), sy), 6, dot_rgb, -1)
 
-        # 2. 埼玉県内の「小さな未塗り白地スペース（微小飛地など）」を自動補填
+        # 2. 埼玉県内の「小さな未塗り白地スペース」を自動補填
         gray_temp = cv2.cvtColor(canvas_rgb, cv2.COLOR_RGB2GRAY)
         white_holes = (gray_temp > 250).astype(np.uint8)
         num_holes, labels_holes, stats_holes, _ = cv2.connectedComponentsWithStats(white_holes)
@@ -359,7 +356,7 @@ with tab1:
                             nx, ny = cx + dx, cy + dy
                             if 0 <= nx < w and 0 <= ny < h:
                                 p_col = canvas_rgb[ny, nx]
-                                if np.mean(p_col) < 230 and np.mean(p_col) > 90:
+                                if np.mean(p_col) < 230 and np.mean(p_col) > 10:
                                     found_color = tuple(int(c) for c in p_col)
                                     break
                         if found_color is not None: break
