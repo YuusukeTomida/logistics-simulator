@@ -92,7 +92,7 @@ for i in range(len(df_a)):
         '一括担当': best_comp,
         'A社担当': False, 'B社担当': False, 'C社担当': False,
         'A社営業所': off_a, 'A社委託': sub_a, 'A社重量_t': wt_a, 'A社距離_km': dist_a, 'A社トンキロ': tk_a,
-        'B社営業所': off_b, 'B社委託': sub_b, 'B社重量_t': wt_b, 'B社距離_km': dist_b, 'B社トンキロ': tk_b,
+        'B社営業所': off_b, 'B社委託': sub_b, 'B社重量_t': wt_b, 'B社距離_km': dist_b, 'B社トンキロ': tk_c,
         'C社営業所': off_c, 'C社委託': sub_c, 'C社重量_t': wt_c, 'C社距離_km': dist_c, 'C社トンキロ': tk_c,
     })
 
@@ -162,7 +162,6 @@ for idx, r in edited_df.iterrows():
     has_indiv = r['A社担当'] or r['B社担当'] or r['C社担当']
     target_comp = r['一括担当']
     
-    # マップ用ステータス記録
     indiv_selected = []
     if r['A社担当']: indiv_selected.append('A社')
     if r['B社担当']: indiv_selected.append('B社')
@@ -222,7 +221,6 @@ sim_df = pd.DataFrame(active_records) if len(active_records) > 0 else pd.DataFra
 with tab1:
     st.subheader("📈 会社毎の現状 vs 改正後（シミュレーション）サマリー")
     
-    # 会社毎の現状・改正後の対比集計
     cur_comp = pd.DataFrame([
         {'会社': 'A社', '現状_自治体数': len(base_df), '現状_重量_t': base_df['A社重量_t'].sum(), '現状_トンキロ': base_df['A社トンキロ'].sum()},
         {'会社': 'B社', '現状_自治体数': len(base_df), '現状_重量_t': base_df['B社重量_t'].sum(), '現状_トンキロ': base_df['B社トンキロ'].sum()},
@@ -242,7 +240,6 @@ with tab1:
     comp_compare['トンキロ削減量'] = comp_compare['現状_トンキロ'] - comp_compare['改正_トンキロ']
     comp_compare['削減率(%)'] = (comp_compare['トンキロ削減量'] / comp_compare['現状_トンキロ'] * 100).round(1)
     
-    # 会社毎のメトリックカード表示（要件①）
     col_a, col_b, col_c = st.columns(3)
     for col, comp_name in zip([col_a, col_b, col_c], ['A社', 'B社', 'C社']):
         row_data = comp_compare[comp_compare['会社'] == comp_name].iloc[0]
@@ -271,15 +268,13 @@ with tab1:
     st.subheader("🗺️ 埼玉県 市町村別受持選択マップ")
     st.caption("塗りつぶし：一括担当（赤: A社, 青: B社, 緑: C社, 灰: なし） / ドット：個別選択された会社の色")
 
-    # 地図の作成（要件②, ③, ④, ⑤）
-    # 埼玉県の中心
     m = folium.Map(location=[35.98, 139.35], zoom_start=9, tiles="CartoDB positron")
     
     COLOR_MAP = {
-        'A社': '#EF4444', # 赤
-        'B社': '#3B82F6', # 青
-        'C社': '#10B981', # 緑
-        'なし': '#94A3B8' # 灰色
+        'A社': '#EF4444',
+        'B社': '#3B82F6',
+        'C社': '#10B981',
+        'なし': '#94A3B8'
     }
 
     for item in map_status_list:
@@ -289,17 +284,9 @@ with tab1:
         
         coords = CITY_COORDS.get(c_name, [35.9, 139.5])
         
-        # 面の色（一括担当の色、なし/個別のみの場合は灰色）
         base_color = COLOR_MAP.get(bulk, '#94A3B8')
         if bulk == 'なし' and len(indivs) > 0:
-            base_color = '#94A3B8' # 要件⑤：一括担当なしで個別設定の場合灰色
+            base_color = '#94A3B8'
             
-        # 市町村ベースサークルマーカー（面表示）
-        folium.CircleMarker(
-            location=coords,
-            radius=14,
-            color=base_color,
-            fill=True,
-            fill_color=base_color,
-            fill_opacity=0.6,
-            popup=f"**{c_name}**
+        indiv_str = ', '.join(indivs) if indivs else 'なし'
+        popup_html = f"{c_name}
