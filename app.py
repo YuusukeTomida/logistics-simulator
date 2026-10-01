@@ -37,7 +37,7 @@ except Exception as e:
     st.error("データの読み込みに失敗しました。A, B, C シートが含まれるExcelファイルであることを確認してください。")
     st.stop()
 
-# 埼玉県72市区町村の推計境界ボックス（ポリゴン塗りつぶし用）座標データ
+# 埼玉県72市区町村の推計境界ボックス座標データ（白地図エリア描画用）
 CITY_BOUNDS = {
     'さいたま市西区': [35.90, 139.56, 35.93, 139.60], 'さいたま市北区': [35.92, 139.60, 35.95, 139.64],
     'さいたま市大宮区': [35.89, 139.61, 35.92, 139.64], 'さいたま市見沼区': [35.91, 139.64, 35.95, 139.68],
@@ -59,7 +59,7 @@ CITY_BOUNDS = {
     '新座市': [35.77, 139.52, 35.82, 139.58], '桶川市': [35.98, 139.52, 36.03, 139.59],
     '久喜市': [36.02, 139.62, 36.10, 139.71], '北本市': [36.01, 139.50, 36.05, 139.56],
     '八潮市': [35.80, 139.81, 35.84, 139.86], '富士見市': [35.83, 139.52, 35.88, 139.57],
-    '三郷市': [35.80, 139.84, 35.86, 139.90], '蓮田市': [35.95, 139.62, 36.01, 139.68],
+    '三郷市': [35.80, 139.84, 35.86, 139.90], '蓮田市': [35.98, 139.62, 36.01, 139.68],
     '坂戸市': [35.93, 139.35, 35.98, 139.43], '幸手市': [36.04, 139.69, 36.11, 139.76],
     '鶴ヶ島市': [35.91, 139.36, 35.95, 139.42], '日高市': [35.86, 139.29, 35.92, 139.37],
     '吉川市': [35.86, 139.81, 35.92, 139.87], 'ふじみ野市': [35.85, 139.49, 35.90, 139.55],
@@ -77,7 +77,7 @@ CITY_BOUNDS = {
     '杉戸町': [36.00, 139.75, 36.06, 139.83], '松伏町': [35.90, 139.79, 35.96, 139.85]
 }
 
-# 3. データ整理・距離／トンキロ・外部委託フラグの統合構築
+# 3. データ整理・統合
 rows = []
 for i in range(len(df_a)):
     code = df_a.loc[i, '市区町村コード']
@@ -102,14 +102,12 @@ for i in range(len(df_a)):
     
     min_tk = min(tk_a, tk_b, tk_c)
     best_comp = 'A社' if tk_a == min_tk else ('B社' if tk_b == min_tk else 'C社')
-    
-    # 初期配列
     init_mode = '委託配達' if (sub_a or sub_b or sub_c) else '自社配達'
     
     rows.append({
         '市区町村コード': code,
         '市区町村名': city,
-        '配達方式': init_mode, # 新規追加列（2列目と3列目の間）
+        '配達方式': init_mode,
         '一括担当': best_comp,
         'A社担当': False, 'B社担当': False, 'C社担当': False,
         'A社営業所': off_a, 'A社委託': sub_a, 'A社重量_t': wt_a, 'A社距離_km': dist_a, 'A社トンキロ': tk_a,
@@ -159,16 +157,8 @@ with tab3:
     edited_df = st.data_editor(
         base_df[['市区町村コード', '市区町村名', '配達方式', '一括担当', 'A社担当', 'B社担当', 'C社担当', 'A社トンキロ', 'B社トンキロ', 'C社トンキロ']],
         column_config={
-            "配達方式": st.column_config.SelectboxColumn(
-                "配達方式",
-                options=["自社配達", "委託配達"],
-                required=True
-            ),
-            "一括担当": st.column_config.SelectboxColumn(
-                "市町村全体 一括担当",
-                options=["なし", "A社", "B社", "C社"],
-                required=True
-            ),
+            "配達方式": st.column_config.SelectboxColumn("配達方式", options=["自社配達", "委託配達"], required=True),
+            "一括担当": st.column_config.SelectboxColumn("市町村全体 一括担当", options=["なし", "A社", "B社", "C社"], required=True),
             "A社担当": st.column_config.CheckboxColumn("A社 個別", default=False),
             "B社担当": st.column_config.CheckboxColumn("B社 個別", default=False),
             "C社担当": st.column_config.CheckboxColumn("C社 個別", default=False),
@@ -185,8 +175,7 @@ map_status_list = []
 for idx, r in edited_df.iterrows():
     orig = base_df.loc[idx]
     city_name = orig['市区町村名']
-    deliv_mode = r['配達方式'] # 追加された配達方式
-    is_sub_mode = (deliv_mode == '委託配達')
+    is_sub_mode = (r['配達方式'] == '委託配達')
     
     has_indiv = r['A社担当'] or r['B社担当'] or r['C社担当']
     target_comp = r['一括担当']
@@ -246,7 +235,7 @@ for idx, r in edited_df.iterrows():
 
 sim_df = pd.DataFrame(active_records) if len(active_records) > 0 else pd.DataFrame()
 
-# タブ1: 全体サマリー & 現状 vs 改正比較 & 白地図マップ
+# タブ1: サマリー & 白地図マップ
 with tab1:
     st.subheader("📈 会社毎の現状 vs 改正後（シミュレーション）サマリー")
     
@@ -297,26 +286,18 @@ with tab1:
     st.subheader("🗺️ 埼玉県 市町村別受持選択 白地図エリアマップ")
     st.caption("エリア塗りつぶし：一括担当（赤: A社, 青: B社, 緑: C社, 灰: なし） / ドット：個別選択された会社の色")
 
-    # APIキー不要の白地図（CartoDB light_nolabels）を使用
+    # タイル画像を使用せず完全な白地図キャンバス（tiles=None）を作成
     m = folium.Map(
         location=[35.98, 139.40],
         zoom_start=10,
-        min_zoom=9,
-        max_zoom=12,
-        max_bounds=True,
-        min_lat=35.6,
-        max_lat=36.4,
-        min_lon=138.7,
-        max_lon=140.0,
-        tiles="https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png",
-        attr="© [OpenStreetMap](https://www.openstreetmap.org/copyright) © [CARTO](https://carto.com/attributions)"
+        tiles=None
     )
     
     COLOR_MAP = {
         'A社': '#EF4444',
         'B社': '#3B82F6',
         'C社': '#10B981',
-        'なし': '#CBD5E1'
+        'なし': '#E2E8F0'
     }
 
     for item in map_status_list:
@@ -325,30 +306,28 @@ with tab1:
         indivs = item['個別選択']
         
         bounds = CITY_BOUNDS.get(c_name, [35.9, 139.4, 35.95, 139.45])
-        
-        fill_col = COLOR_MAP.get(bulk, '#CBD5E1')
+        fill_col = COLOR_MAP.get(bulk, '#E2E8F0')
         if bulk == 'なし' and len(indivs) > 0:
-            fill_col = '#CBD5E1'
+            fill_col = '#E2E8F0'
             
         indiv_str = ', '.join(indivs) if len(indivs) > 0 else 'なし'
         
-        # 市町村全体のエリア矩形ポリゴン（塗りつぶし白地図表現）
+        # 枠線とエリア塗りつぶし（白地図表現）
         folium.Rectangle(
             bounds=[[bounds[0], bounds[1]], [bounds[2], bounds[3]]],
-            color="#64748B",
-            weight=1,
+            color="#475569",
+            weight=1.5,
             fill=True,
             fill_color=fill_col,
-            fill_opacity=0.65,
+            fill_opacity=0.75,
             popup=str(c_name) + " | 一括: " + str(bulk) + " | 個別: " + str(indiv_str),
             tooltip=str(c_name)
         ).add_to(m)
         
-        # ドット表示（個別選択ありの場合）
+        # ドット表示
         if len(indivs) > 0:
             center_lat = (bounds[0] + bounds[2]) / 2.0
             center_lon = (bounds[1] + bounds[3]) / 2.0
-            
             for d_idx, comp_indiv in enumerate(indivs):
                 dot_color = COLOR_MAP.get(comp_indiv, '#000000')
                 offset_lat = center_lat + (d_idx - (len(indivs)-1)/2.0) * 0.012
@@ -369,7 +348,7 @@ with tab1:
 # タブ2: 会社別 & 営業所別 詳細集計
 with tab2:
     st.subheader("🏢 会社別 集計（自社配達 vs 外部委託）")
-    st.caption("※ E列「◯」の地域は「（委託）」として区分集計しています。")
+    st.caption("※ 「（委託）」指定の地域は区分して集計しています。")
     
     if not sim_df.empty:
         comp_sub_summary = sim_df.groupby(['会社表示']).agg(
@@ -390,7 +369,7 @@ with tab2:
 
     st.markdown("---")
     st.subheader("🏬 営業所別 集計（自社配達 vs 外部委託）")
-    st.caption("※ 営業所ごとに委託地域は「（委託）」として区分表示しています。")
+    st.caption("※ 営業所ごとに「（委託）」区分で行を分けて表示しています。")
     
     if not sim_df.empty:
         off_sub_summary = sim_df.groupby(['担当会社', '営業所表示']).agg(
