@@ -308,9 +308,9 @@ with tab1:
                         cv2.circle(img_bgr, (int(dot_x), y), 6, (255, 255, 255), -1)
                         cv2.circle(img_bgr, (int(dot_x), y), 5, dot_bgr, -1)
 
-        # BGRからRGBに変換して表示
+        # BGRからRGBに変換して表示（最新のStreamlit対応: use_container_width）
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        st.image(img_rgb, use_column_width=True)
+        st.image(img_rgb, use_container_width=True)
     else:
         st.warning("「20261001_bc6e30f7720a548fb561a31.png」がリポジトリ内に存在しません。画像をアップロードして配置してください。")
 
