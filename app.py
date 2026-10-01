@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import cv2
+from PIL import Image, ImageDraw, ImageFont
 import os
 
 # 1. ページ基本設定
@@ -37,28 +38,45 @@ except Exception as e:
     st.error("データの読み込みに失敗しました。A, B, C シートが含まれるExcelファイルであることを確認してください。")
     st.stop()
 
-# 新しい画像用：埼玉県72市区町村の塗りつぶし開始座標（シードポイント X, Y）
+# 提供画像（1024 x 580 px ベース）における各市区町村の内部シード座標 (X, Y)
 CITY_SEEDS = {
-    'さいたま市西区': (715, 706), 'さいたま市北区': (756, 686), 'さいたま市大宮区': (748, 715),
-    'さいたま市見沼区': (782, 698), 'さいたま市中央区': (738, 731), 'さいたま市桜区': (718, 748),
-    'さいたま市浦和区': (762, 740), 'さいたま市南区': (760, 770), 'さいたま市緑区': (804, 744),
-    'さいたま市岩槻区': (822, 682), '川越市': (662, 711), '熊谷市': (588, 501),
-    '川口市': (834, 786), '行田市': (651, 505), '秩父市': (290, 705), '所沢市': (634, 806),
-    '飯能市': (458, 741), '加須市': (748, 519), '本庄市': (402, 478), '東松山市': (584, 611),
-    '春日部市': (860, 651), '狭山市': (605, 759), '羽生市': (708, 488), '鴻巣市': (664, 568),
-    '深谷市': (501, 478), '上尾市': (718, 661), '草加市': (874, 772), '越谷市': (871, 725),
-    '蕨市': (777, 782), '戸田市': (760, 797), '入間市': (562, 791), '朝霞市': (732, 802),
-    '志木市': (718, 777), '和光市': (753, 819), '新座市': (703, 817), '桶川市': (677, 637),
-    '久喜市': (775, 581), '北本市': (673, 612), '八潮市': (906, 789), '富士見市': (698, 761),
-    '三郷市': (921, 776), '蓮田市': (763, 636), '坂戸市': (590, 671), '幸手市': (843, 574),
-    '鶴ヶ島市': (576, 696), '日高市': (543, 730), '吉川市': (925, 728), 'ふじみ野市': (677, 744),
-    '白岡市': (791, 612), '伊奈町': (733, 636), '三芳町': (665, 776), '毛呂山町': (511, 690),
-    '越生町': (490, 668), '滑川町': (558, 591), '嵐山町': (529, 587), '小川町': (486, 581),
-    '川島町': (640, 662), '吉見町': (630, 597), '鳩山町': (538, 641), 'ときがわ町': (471, 639),
-    '横瀬町': (395, 671), '皆野町': (365, 566), '長瀞町': (386, 532), '小鹿野町': (253, 622),
-    '東秩父村': (438, 612), '美里町': (416, 498), '神川町': (386, 451), '上里町': (399, 422),
-    '寄居町': (448, 538), '宮代町': (822, 621), '杉戸町': (849, 609), '松伏町': (904, 690)
+    'さいたま市西区': (715, 370), 'さいたま市北区': (756, 355), 'さいたま市大宮区': (748, 380),
+    'さいたま市見沼区': (782, 365), 'さいたま市中央区': (738, 395), 'さいたま市桜区': (718, 410),
+    'さいたま市浦和区': (762, 405), 'さいたま市南区': (760, 430), 'さいたま市緑区': (804, 405),
+    'さいたま市岩槻区': (822, 350), '川越市': (662, 375), '熊谷市': (588, 175),
+    '川口市': (834, 445), '行田市': (651, 180), '秩父市': (212, 375), '所沢市': (634, 465),
+    '飯能市': (380, 405), '加須市': (748, 195), '本庄市': (326, 150), '東松山市': (584, 285),
+    '春日部市': (860, 325), '狭山市': (590, 425), '羽生市': (708, 165), '鴻巣市': (664, 245),
+    '深谷市': (450, 160), '上尾市': (718, 335), '草加市': (874, 430), '越谷市': (871, 385),
+    '蕨市': (777, 442), '戸田市': (760, 455), '入間市': (562, 450), '朝霞市': (732, 460),
+    '志木市': (718, 435), '和光市': (753, 475), '新座市': (703, 472), '桶川市': (677, 315),
+    '久喜市': (775, 255), '北本市': (673, 290), '八潮市': (906, 445), '富士見市': (698, 415),
+    '三郷市': (921, 430), '蓮田市': (763, 315), '坂戸市': (590, 345), '幸手市': (843, 250),
+    '鶴ヶ島市': (576, 370), '日高市': (543, 395), '吉川市': (925, 385), 'ふじみ野市': (677, 398),
+    '白岡市': (791, 285), '伊奈町': (733, 315), '三芳町': (665, 430), '毛呂山町': (511, 355),
+    '越生町': (490, 335), '滑川町': (558, 265), '嵐山町': (529, 260), '小川町': (486, 255),
+    '川島町': (640, 335), '吉見町': (630, 270), '鳩山町': (538, 315), 'ときがわ町': (471, 315),
+    '横瀬町': (335, 355), '皆野町': (325, 250), '長瀞町': (340, 210), '小鹿野町': (175, 290),
+    '東秩父村': (415, 285), '美里町': (380, 185), '神川町': (345, 140), '上里町': (360, 110),
+    '寄居町': (415, 225), '宮代町': (822, 295), '杉戸町': (849, 280), '松伏町': (904, 350)
 }
+
+# 日本語フォント取得関数
+def get_japanese_font(font_size=11):
+    font_paths = [
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/ipafont-gothic/ipag.ttf",
+        "C:\\Windows\\Fonts\\meiryo.ttc",
+        "C:\\Windows\\Fonts\\msgothic.ttc"
+    ]
+    for path in font_paths:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, font_size)
+            except Exception:
+                pass
+    return ImageFont.load_default()
 
 # 3. データ整理・統合
 rows = []
@@ -131,12 +149,6 @@ tab1, tab2, tab3 = st.tabs(["📊 全体サマリー＆現状比較", "🏢 会�
 # タブ3: 個別編集画面
 with tab3:
     st.subheader("📝 市町村別・受持選択テーブル")
-    st.markdown("""
-    - **配達方式（列2）**: 「自社配達」または「委託配達」を選択できます。
-    - **一括担当（列3）**: 「A社」「B社」「C社」から1つ選択すると、市町村全体の荷物が選択した会社に一括集計されます。
-    - **個社チェック（列4〜6）**: チェックを入れた会社の荷物のみが集計されます（個別選択が最優先されます）。
-    """)
-
     edited_df = st.data_editor(
         base_df[['市区町村コード', '市区町村名', '配達方式', '一括担当', 'A社担当', 'B社担当', 'C社担当', 'A社トンキロ', 'B社トンキロ', 'C社トンキロ']],
         column_config={
@@ -217,7 +229,7 @@ for idx, r in edited_df.iterrows():
 
 sim_df = pd.DataFrame(active_records) if len(active_records) > 0 else pd.DataFrame()
 
-# タブ1: サマリー & 高精細白地図ペイントマップ
+# タブ1: サマリー & マップ描画
 with tab1:
     st.subheader("📈 会社毎の現状 vs 改正後（シミュレーション）サマリー")
     
@@ -265,62 +277,94 @@ with tab1:
     )
 
     st.markdown("---")
-    st.subheader("🗺️ 埼玉県 市町村別受持選択 マップ")
+    st.subheader("🗺️ 埼玉県 市町村別受持選択 白地図エリアマップ")
     st.caption("塗り分け：一括担当（赤: A社, 青: B社, 緑: C社, 灰: なし） / ドット：個別選択された会社の色")
 
     map_img_path = "20261001_bc6e30f7720a548fb561a31.png"
+    if not os.path.exists(map_img_path):
+        map_img_path = "20261001_bc6e30f7720a548fb561a31.jpg"
+
     if os.path.exists(map_img_path):
-        img_bgr = cv2.imread(map_img_path)
-        h, w, _ = img_bgr.shape
+        src_img = cv2.imread(map_img_path)
+        h, w, _ = src_img.shape
         
-        # 鮮やかな高発色カラー (BGR)
+        # 白黒反転処理（要件②：黒背景・白線 → 白背景・濃いグレー線へ変換）
+        gray = cv2.cvtColor(src_img, cv2.COLOR_BGR2GRAY)
+        
+        # 背景（黒）を純白（255, 255, 255）にし、境界線（白）をくっきり濃いグレー（70, 80, 95）に反転
+        inv_bgr = np.full_like(src_img, 255)
+        line_mask = gray > 100
+        inv_bgr[line_mask] = (70, 80, 95)
+        
+        # カラーマップ定義 (BGR)
         BGR_MAP = {
-            'A社': (90, 90, 240),    # 鮮やかな赤
-            'B社': (240, 150, 70),   # 鮮やかな青
-            'C社': (100, 200, 90),   # 鮮やかな緑
+            'A社': (90, 90, 240),    # 赤系
+            'B社': (240, 150, 70),   # 青系
+            'C社': (100, 200, 90),   # 緑系
             'なし': (240, 240, 240)  # 白・薄灰
         }
         
         mask = np.zeros((h + 2, w + 2), np.uint8)
         
-        # 太い境界線を越えない正確なペイント処理
+        # 1. 市町村ごとの領域をFloodFillで塗りつぶし
         for c_name, seed in CITY_SEEDS.items():
             info = map_status_dict.get(c_name, {'一括担当': 'なし', '個別選択': []})
             bulk = info['一括担当']
             indivs = info['個別選択']
             
-            fill_bgr = BGR_MAP.get(bulk, (245, 245, 245))
+            fill_bgr = BGR_MAP.get(bulk, (240, 240, 240))
             if bulk == 'なし' and len(indivs) > 0:
                 fill_bgr = (240, 240, 240)
                 
             x, y = seed[0], seed[1]
             if 0 <= x < w and 0 <= y < h:
-                # 太い境界線により完全密閉された領域を鮮やかにペイント
-                cv2.floodFill(img_bgr, mask, (x, y), fill_bgr, (25, 25, 25), (25, 25, 25), cv2.FLOODFILL_FIXED_RANGE)
+                # 境界線を越えない精度で塗りつぶし
+                cv2.floodFill(inv_bgr, mask, (x, y), fill_bgr, (20, 20, 20), (20, 20, 20), cv2.FLOODFILL_FIXED_RANGE)
                 
                 # ドット描画（個別選択時）
                 if len(indivs) > 0:
                     for d_idx, comp_indiv in enumerate(indivs):
                         dot_bgr = BGR_MAP.get(comp_indiv, (0, 0, 0))
                         dot_x = x + (d_idx - (len(indivs)-1)/2.0) * 16
-                        cv2.circle(img_bgr, (int(dot_x), y), 7, (255, 255, 255), -1)
-                        cv2.circle(img_bgr, (int(dot_x), y), 6, dot_bgr, -1)
+                        cv2.circle(inv_bgr, (int(dot_x), y), 7, (255, 255, 255), -1)
+                        cv2.circle(inv_bgr, (int(dot_x), y), 6, dot_bgr, -1)
 
-        # 不要な背景余白を自動クロップ
-        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        gray_img = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
+        # 要件④：紐づけ確認モード（チェックボックス）
+        st.markdown("---")
+        show_labels = st.checkbox("🔍 市町村名の領域紐づけ位置を確認（プレビュー描画）", value=False)
         
-        non_bg_pts = np.where(gray_img < 240)
-        if len(non_bg_pts[0]) > 0:
-            min_y, max_y = np.min(non_bg_pts[0]), np.max(non_bg_pts[0])
-            min_x, max_x = np.min(non_bg_pts[1]), np.max(non_bg_pts[1])
+        img_rgb = cv2.cvtColor(inv_bgr, cv2.COLOR_BGR2RGB)
+        
+        if show_labels:
+            pil_img = Image.fromarray(img_rgb)
+            draw = ImageDraw.Draw(pil_img)
+            font = get_japanese_font(11)
             
-            pad = 10
+            for c_name, seed in CITY_SEEDS.items():
+                x, y = seed[0], seed[1]
+                bbox = draw.textbbox((0, 0), c_name, font=font)
+                text_w = bbox[2] - bbox[0]
+                text_h = bbox[3] - bbox[1]
+                
+                # 赤点シードとテキスト枠を表示
+                draw.rectangle([x - text_w//2 - 2, y - text_h//2 - 1, x + text_w//2 + 2, y + text_h//2 + 1], fill=(255, 255, 255), outline=(220, 30, 30))
+                draw.text((x - text_w//2, y - text_h//2), c_name, fill=(15, 23, 42), font=font)
+                draw.ellipse([x - 2, y - 2, x + 2, y + 2], fill=(220, 30, 30))
+                
+            img_rgb = np.array(pil_img)
+
+        # 不要な黒・白余白を自動で最小限界までトリミング（要件①：全領域表示）
+        gray_check = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
+        non_bg = np.where(gray_check < 250)
+        
+        if len(non_bg[0]) > 0:
+            min_y, max_y = np.min(non_bg[0]), np.max(non_bg[0])
+            min_x, max_x = np.min(non_bg[1]), np.max(non_bg[1])
+            pad = 15
             crop_min_y = max(0, min_y - pad)
             crop_max_y = min(h, max_y + pad)
             crop_min_x = max(0, min_x - pad)
             crop_max_x = min(w, max_x + pad)
-            
             cropped_img = img_rgb[crop_min_y:crop_max_y, crop_min_x:crop_max_x]
         else:
             cropped_img = img_rgb
