@@ -52,13 +52,13 @@ CITY_SEEDS = {
     '志木市': (640, 613), '和光市': (675, 655), '新座市': (625, 653), '桶川市': (599, 467),
     '久喜市': (697, 411), '北本市': (595, 442), '八潮市': (828, 625), '富士見市': (620, 597),
     '三郷市': (843, 612), '蓮田市': (685, 471), '坂戸市': [512, 501], '幸手市': (765, 404),
-    '鶴ヶ島市': (498, 526), '日高市': (465, 560), '吉川市': (847, 564), 'ふジみ野市': (599, 580),
-    'ふじみ野市': (599, 580), '白岡市': (713, 442), '伊奈町': (655, 471), '三芳町': (587, 612),
-    '毛呂山町': (433, 520), '越生町': (412, 498), '滑川町': (480, 421), '嵐山町': [451, 417],
-    '小川町': (408, 411), '川島町': (562, 492), '吉見町': (552, 427), '鳩山町': (460, 471),
-    'ときがわ町': (393, 469), '横瀬町': (317, 501), '皆野町': [287, 396], '長瀞町': (308, 362),
-    '小鹿野町': (175, 452), '東秩父村': (360, 442), '美里町': [338, 328], '神川町': (308, 281),
-    '上里町': (321, 252), '寄居町': [370, 368], '宮代町': (743, 451), '杉戸町': [770, 439], '松伏町': (825, 520)
+    '鶴ヶ島市': (498, 526), '日高市': (465, 560), '吉川市': (847, 564), 'ふじみ野市': (599, 580),
+    '白岡市': (713, 442), '伊奈町': (655, 471), '三芳町': (587, 612), '毛呂山町': (433, 520),
+    '越生町': (412, 498), '滑川町': (480, 421), '嵐山町': [451, 417], '小川町': (408, 411),
+    '川島町': (562, 492), '吉見町': (552, 427), '鳩山町': (460, 471), 'ときがわ町': (393, 469),
+    '横瀬町': (317, 501), '皆野町': [287, 396], '長瀞町': (308, 362), '小鹿野町': (175, 452),
+    '東秩父村': (360, 442), '美里町': [338, 328], '神川町': (308, 281), '上里町': (321, 252),
+    '寄居町': [370, 368], '宮代町': (743, 451), '杉戸町': [770, 439], '松伏町': (825, 520)
 }
 
 # 3. データ整理・統合
@@ -218,7 +218,7 @@ for idx, r in edited_df.iterrows():
 
 sim_df = pd.DataFrame(active_records) if len(active_records) > 0 else pd.DataFrame()
 
-# タブ1: サマリー & 画像塗りつぶしマップ
+# タブ1: サマリー & 高精細クロップ済み画像塗りつぶしマップ
 with tab1:
     st.subheader("📈 会社毎の現状 vs 改正後（シミュレーション）サマリー")
     
@@ -266,38 +266,37 @@ with tab1:
     )
 
     st.markdown("---")
-    st.subheader("🗺️ 埼玉県 市町村別受持選択 画像塗りつぶしマップ")
+    st.subheader("🗺️ 埼玉県 市町村別受持選択 高精細マップ")
     st.caption("塗り分け：一括担当（赤: A社, 青: B社, 緑: C社, 灰: なし） / ドット：個別選択された会社の色")
 
-    # 画像ペイント処理（OpenCV FloodFill）
+    # 高画質処理 ＆ 余白自動クロップ ＆ 文字の鮮明再描画
     map_img_path = "20261001_bc6e30f7720a548fb561a31.png"
     if os.path.exists(map_img_path):
         img_bgr = cv2.imread(map_img_path)
         h, w, _ = img_bgr.shape
         
-        # 色定義 (BGR)
+        # 明るく見やすいパステル系カラー (BGR)
         BGR_MAP = {
-            'A社': (100, 100, 240),  # 赤系
-            'B社': (240, 150, 80),   # 青系
-            'C社': (120, 200, 100),  # 緑系
-            'なし': (220, 220, 220)  # 灰色
+            'A社': (110, 110, 245),  # 鮮やかな赤系
+            'B社': (245, 160, 90),   # 鮮やかな青系
+            'C社': (130, 210, 110),  # 鮮やかな緑系
+            'なし': (235, 235, 235)  # 灰色
         }
         
-        # FloodFill用マスク
         mask = np.zeros((h + 2, w + 2), np.uint8)
         
+        # 1. 塗りつぶし実行
         for c_name, seed in CITY_SEEDS.items():
             info = map_status_dict.get(c_name, {'一括担当': 'なし', '個別選択': []})
             bulk = info['一括担当']
             indivs = info['個別選択']
             
-            fill_bgr = BGR_MAP.get(bulk, (240, 240, 240))
+            fill_bgr = BGR_MAP.get(bulk, (245, 245, 245))
             if bulk == 'なし' and len(indivs) > 0:
-                fill_bgr = (220, 220, 220)
+                fill_bgr = (235, 235, 235)
                 
             x, y = seed[0], seed[1]
             if 0 <= x < w and 0 <= y < h:
-                # 境界線（黒線）を避けて白地領域のみ塗る
                 cv2.floodFill(img_bgr, mask, (x, y), fill_bgr, (20, 20, 20), (20, 20, 20), cv2.FLOODFILL_FIXED_RANGE)
                 
                 # ドット描画（個別選択時）
@@ -305,12 +304,45 @@ with tab1:
                     for d_idx, comp_indiv in enumerate(indivs):
                         dot_bgr = BGR_MAP.get(comp_indiv, (0, 0, 0))
                         dot_x = x + (d_idx - (len(indivs)-1)/2.0) * 14
-                        cv2.circle(img_bgr, (int(dot_x), y), 6, (255, 255, 255), -1)
-                        cv2.circle(img_bgr, (int(dot_x), y), 5, dot_bgr, -1)
+                        cv2.circle(img_bgr, (int(dot_x), y - 10), 6, (255, 255, 255), -1)
+                        cv2.circle(img_bgr, (int(dot_x), y - 10), 5, dot_bgr, -1)
 
-        # BGRからRGBに変換して表示（最新のStreamlit対応: use_container_width）
+        # 2. PILによる市町村名テキストのくっきり高画質描画（縁取り付き）
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        st.image(img_rgb, use_container_width=True)
+        pil_img = Image.fromarray(img_rgb)
+        draw = ImageDraw.Draw(pil_img)
+        
+        # 日本語フォント指定（Linux/Windows環境対応）
+        font = ImageFont.load_default()
+        
+        for c_name, seed in CITY_SEEDS.items():
+            x, y = seed[0], seed[1]
+            # 文字背景の白色フチ＋文字本体（ネイビー）
+            draw.text((x - 12, y - 4), c_name, fill=(15, 23, 42), stroke_width=2, stroke_fill=(255, 255, 255), font=font)
+
+        # 3. ③ 余白（グレーエリア）の自動クロップ（トリミング）
+        np_img = np.array(pil_img)
+        gray_img = cv2.cvtColor(np_img, cv2.COLOR_RGB2GRAY)
+        
+        # 埼玉県の地図領域（グレー背景値235未満）を抽出
+        non_bg_pts = np.where(gray_img < 235)
+        if len(non_bg_pts[0]) > 0:
+            min_y, max_y = np.min(non_bg_pts[0]), np.max(non_bg_pts[0])
+            min_x, max_x = np.min(non_bg_pts[1]), np.max(non_bg_pts[1])
+            
+            # マージン（余白）を少しだけ残してトリミング
+            pad = 15
+            crop_min_y = max(0, min_y - pad)
+            crop_max_y = min(h, max_y + pad)
+            crop_min_x = max(0, min_x - pad)
+            crop_max_x = min(w, max_x + pad)
+            
+            cropped_img = np_img[crop_min_y:crop_max_y, crop_min_x:crop_max_x]
+        else:
+            cropped_img = np_img
+
+        # ① 高解像度拡大表示 (Streamlitコンテナ幅ぴったりに綺麗にフィット)
+        st.image(cropped_img, use_container_width=True)
     else:
         st.warning("「20261001_bc6e30f7720a548fb561a31.png」がリポジトリ内に存在しません。画像をアップロードして配置してください。")
 
