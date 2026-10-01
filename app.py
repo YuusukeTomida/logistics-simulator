@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import cv2
-from PIL import Image, ImageDraw, ImageFont
 import os
 
 # 1. ページ基本設定
@@ -38,7 +37,7 @@ except Exception as e:
     st.error("データの読み込みに失敗しました。A, B, C シートが含まれるExcelファイルであることを確認してください。")
     st.stop()
 
-# 提供画像（1024 x 580 px ベース）における各市区町村の内部シード座標 (X, Y)
+# 提供画像（1024 x 564/580 px ベース）における各市区町村の内部シード座標 (X, Y)
 CITY_SEEDS = {
     'さいたま市西区': (715, 370), 'さいたま市北区': (756, 355), 'さいたま市大宮区': (748, 380),
     'さいたま市見沼区': (782, 365), 'さいたま市中央区': (738, 395), 'さいたま市桜区': (718, 410),
@@ -60,23 +59,6 @@ CITY_SEEDS = {
     '東秩父村': (415, 285), '美里町': (380, 185), '神川町': (345, 140), '上里町': (360, 110),
     '寄居町': (415, 225), '宮代町': (822, 295), '杉戸町': (849, 280), '松伏町': (904, 350)
 }
-
-# 日本語フォント取得関数
-def get_japanese_font(font_size=11):
-    font_paths = [
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/ipafont-gothic/ipag.ttf",
-        "C:\\Windows\\Fonts\\meiryo.ttc",
-        "C:\\Windows\\Fonts\\msgothic.ttc"
-    ]
-    for path in font_paths:
-        if os.path.exists(path):
-            try:
-                return ImageFont.truetype(path, font_size)
-            except Exception:
-                pass
-    return ImageFont.load_default()
 
 # 3. データ整理・統合
 rows = []
@@ -288,38 +270,51 @@ with tab1:
         src_img = cv2.imread(map_img_path)
         h, w, _ = src_img.shape
         
-        # 白黒反転処理（要件②：黒背景・白線 → 白背景・濃いグレー線へ変換）
+        # 白黒反転処理（背景：黒→白、境界線：灰色→濃いグレー）
         gray = cv2.cvtColor(src_img, cv2.COLOR_BGR2GRAY)
-        
-        # 背景（黒）を純白（255, 255, 255）にし、境界線（白）をくっきり濃いグレー（70, 80, 95）に反転
-        inv_bgr = np.full_like(src_img, 255)
-        line_mask = gray > 100
-        inv_bgr[line_mask] = (70, 80, 95)
+        inv_bgr = np.full_like(src_img, 255) # 純白背景
+        line_mask = gray > 60
+        inv_bgr[line_mask] = (70, 80, 95)    # 濃いグレー境界線
         
         # カラーマップ定義 (BGR)
         BGR_MAP = {
             'A社': (90, 90, 240),    # 赤系
             'B社': (240, 150, 70),   # 青系
             'C社': (100, 200, 90),   # 緑系
-            'なし': (240, 240, 240)  # 白・薄灰
+            'なし': (245, 245, 245)  # 白・薄灰
         }
         
-        mask = np.zeros((h + 2, w + 2), np.uint8)
+        # ★【重要修正】埼玉県外（左上等の背景領域）をFloodFillペイント保護するマスク作成★
+        mask_protection = np.zeros((h + 2, w + 2), np.uint8)
+        # (0,0)の背景から到達できる範囲（県外）を1としてマークしてペイント禁止にする
+        cv2.floodFill(inv_bgr.copy(), mask_protection, (0, 0), (255, 255, 255), (20, 20, 20), (20, 20, 20), cv2.FLOODFILL_FIXED_RANGE)
         
-        # 1. 市町村ごとの領域をFloodFillで塗りつぶし
+        # 1. 各市町村の領域をペイント（県外保護マスク適用）
         for c_name, seed in CITY_SEEDS.items():
             info = map_status_dict.get(c_name, {'一括担当': 'なし', '個別選択': []})
             bulk = info['一括担当']
             indivs = info['個別選択']
             
-            fill_bgr = BGR_MAP.get(bulk, (240, 240, 240))
+            fill_bgr = BGR_MAP.get(bulk, (245, 245, 245))
             if bulk == 'なし' and len(indivs) > 0:
-                fill_bgr = (240, 240, 240)
+                fill_bgr = (245, 245, 245)
                 
             x, y = seed[0], seed[1]
             if 0 <= x < w and 0 <= y < h:
-                # 境界線を越えない精度で塗りつぶし
-                cv2.floodFill(inv_bgr, mask, (x, y), fill_bgr, (20, 20, 20), (20, 20, 20), cv2.FLOODFILL_FIXED_RANGE)
+                # 線上に当たっている場合は近傍の白地へ自動退避
+                if np.mean(inv_bgr[y, x]) < 150:
+                    found = False
+                    for dy in range(-5, 6):
+                        for dx in range(-5, 6):
+                            nx, ny = x + dx, y + dy
+                            if 0 <= nx < w and 0 <= ny < h and np.mean(inv_bgr[ny, nx]) > 200:
+                                x, y = nx, ny
+                                found = True
+                                break
+                        if found: break
+                
+                # FloodFill ペイント実行（mask_protectionにより県外への漏れを完全にガード）
+                cv2.floodFill(inv_bgr, mask_protection, (x, y), fill_bgr, (25, 25, 25), (25, 25, 25), cv2.FLOODFILL_FIXED_RANGE)
                 
                 # ドット描画（個別選択時）
                 if len(indivs) > 0:
@@ -329,38 +324,15 @@ with tab1:
                         cv2.circle(inv_bgr, (int(dot_x), y), 7, (255, 255, 255), -1)
                         cv2.circle(inv_bgr, (int(dot_x), y), 6, dot_bgr, -1)
 
-        # 要件④：紐づけ確認モード（チェックボックス）
-        st.markdown("---")
-        show_labels = st.checkbox("🔍 市町村名の領域紐づけ位置を確認（プレビュー描画）", value=False)
-        
+        # 2. 不要な余白領域を自動クロップ（全自治体が綺麗に収まる範囲）
         img_rgb = cv2.cvtColor(inv_bgr, cv2.COLOR_BGR2RGB)
-        
-        if show_labels:
-            pil_img = Image.fromarray(img_rgb)
-            draw = ImageDraw.Draw(pil_img)
-            font = get_japanese_font(11)
-            
-            for c_name, seed in CITY_SEEDS.items():
-                x, y = seed[0], seed[1]
-                bbox = draw.textbbox((0, 0), c_name, font=font)
-                text_w = bbox[2] - bbox[0]
-                text_h = bbox[3] - bbox[1]
-                
-                # 赤点シードとテキスト枠を表示
-                draw.rectangle([x - text_w//2 - 2, y - text_h//2 - 1, x + text_w//2 + 2, y + text_h//2 + 1], fill=(255, 255, 255), outline=(220, 30, 30))
-                draw.text((x - text_w//2, y - text_h//2), c_name, fill=(15, 23, 42), font=font)
-                draw.ellipse([x - 2, y - 2, x + 2, y + 2], fill=(220, 30, 30))
-                
-            img_rgb = np.array(pil_img)
-
-        # 不要な黒・白余白を自動で最小限界までトリミング（要件①：全領域表示）
         gray_check = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
         non_bg = np.where(gray_check < 250)
         
         if len(non_bg[0]) > 0:
             min_y, max_y = np.min(non_bg[0]), np.max(non_bg[0])
             min_x, max_x = np.min(non_bg[1]), np.max(non_bg[1])
-            pad = 15
+            pad = 12
             crop_min_y = max(0, min_y - pad)
             crop_max_y = min(h, max_y + pad)
             crop_min_x = max(0, min_x - pad)
