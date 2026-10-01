@@ -61,6 +61,24 @@ CITY_SEEDS = {
     '寄居町': [370, 368], '宮代町': (743, 451), '杉戸町': [770, 439], '松伏町': (825, 520)
 }
 
+# 日本語フォント取得関数（文字化け解消用）
+def get_japanese_font(font_size=13):
+    font_paths = [
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/ipafont-gothic/ipag.ttf",
+        "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",
+        "C:\\Windows\\Fonts\\meiryo.ttc",
+        "C:\\Windows\\Fonts\\msgothic.ttc"
+    ]
+    for path in font_paths:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, font_size)
+            except Exception:
+                pass
+    return ImageFont.load_default()
+
 # 3. データ整理・統合
 rows = []
 for i in range(len(df_a)):
@@ -218,7 +236,7 @@ for idx, r in edited_df.iterrows():
 
 sim_df = pd.DataFrame(active_records) if len(active_records) > 0 else pd.DataFrame()
 
-# タブ1: サマリー & 高精細クロップ済み画像塗りつぶしマップ
+# タブ1: サマリー & 画像塗りつぶしマップ
 with tab1:
     st.subheader("📈 会社毎の現状 vs 改正後（シミュレーション）サマリー")
     
@@ -266,26 +284,25 @@ with tab1:
     )
 
     st.markdown("---")
-    st.subheader("🗺️ 埼玉県 市町村別受持選択 高精細マップ")
+    st.subheader("🗺️ 埼玉県 市町村別受持選択 マップ")
     st.caption("塗り分け：一括担当（赤: A社, 青: B社, 緑: C社, 灰: なし） / ドット：個別選択された会社の色")
 
-    # 高画質処理 ＆ 余白自動クロップ ＆ 文字の鮮明再描画
     map_img_path = "20261001_bc6e30f7720a548fb561a31.png"
     if os.path.exists(map_img_path):
         img_bgr = cv2.imread(map_img_path)
         h, w, _ = img_bgr.shape
         
-        # 明るく見やすいパステル系カラー (BGR)
+        # 色定義 (BGR) - 鮮明なパステルカラー
         BGR_MAP = {
-            'A社': (110, 110, 245),  # 鮮やかな赤系
-            'B社': (245, 160, 90),   # 鮮やかな青系
-            'C社': (130, 210, 110),  # 鮮やかな緑系
+            'A社': (110, 110, 245),  # 赤系
+            'B社': (245, 160, 90),   # 青系
+            'C社': (130, 210, 110),  # 緑系
             'なし': (235, 235, 235)  # 灰色
         }
         
         mask = np.zeros((h + 2, w + 2), np.uint8)
         
-        # 1. 塗りつぶし実行
+        # 1. 画像上の文字枠ギリギリまで白地領域を綺麗に塗りつぶし（黒文字と黒線枠を残してペイント）
         for c_name, seed in CITY_SEEDS.items():
             info = map_status_dict.get(c_name, {'一括担当': 'なし', '個別選択': []})
             bulk = info['一括担当']
@@ -297,7 +314,8 @@ with tab1:
                 
             x, y = seed[0], seed[1]
             if 0 <= x < w and 0 <= y < h:
-                cv2.floodFill(img_bgr, mask, (x, y), fill_bgr, (20, 20, 20), (20, 20, 20), cv2.FLOODFILL_FIXED_RANGE)
+                # 許容差範囲を精密調整して白地のみを塗る
+                cv2.floodFill(img_bgr, mask, (x, y), fill_bgr, (35, 35, 35), (35, 35, 35), cv2.FLOODFILL_FIXED_RANGE)
                 
                 # ドット描画（個別選択時）
                 if len(indivs) > 0:
@@ -307,31 +325,40 @@ with tab1:
                         cv2.circle(img_bgr, (int(dot_x), y - 10), 6, (255, 255, 255), -1)
                         cv2.circle(img_bgr, (int(dot_x), y - 10), 5, dot_bgr, -1)
 
-        # 2. PILによる市町村名テキストのくっきり高画質描画（縁取り付き）
+        # 2. 日本語フォントによる高精彩テキスト再配置（元の画像文字位置に綺麗に上書き）
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(img_rgb)
         draw = ImageDraw.Draw(pil_img)
-        
-        # 日本語フォント指定（Linux/Windows環境対応）
-        font = ImageFont.load_default()
+        jp_font = get_japanese_font(12)
         
         for c_name, seed in CITY_SEEDS.items():
             x, y = seed[0], seed[1]
-            # 文字背景の白色フチ＋文字本体（ネイビー）
-            draw.text((x - 12, y - 4), c_name, fill=(15, 23, 42), stroke_width=2, stroke_fill=(255, 255, 255), font=font)
+            info = map_status_dict.get(c_name, {'一括担当': 'なし', '個別選択': []})
+            bulk = info['一括担当']
+            bg_rgb = (fill_bgr[2], fill_bgr[1], fill_bgr[0]) if 'fill_bgr' in locals() else (255, 255, 255)
+            
+            # テキストサイズバウンディングボックス
+            bbox = draw.textbbox((0, 0), c_name, font=jp_font)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+            text_x = x - text_w // 2
+            text_y = y - text_h // 2
+            
+            # 要件③・④: 市町村名背景色を塗りつぶし色と一致させ、最小限の枠で元文字に重ねる
+            draw.rectangle([text_x - 2, text_y - 1, text_x + text_w + 2, text_y + text_h + 1], fill=bg_rgb)
+            # 文字（くっきり濃ネイビー）
+            draw.text((text_x, text_y), c_name, fill=(15, 23, 42), font=jp_font)
 
-        # 3. ③ 余白（グレーエリア）の自動クロップ（トリミング）
+        # 3. 灰色の不要な外枠余白を自動トリミング（クロップ）
         np_img = np.array(pil_img)
         gray_img = cv2.cvtColor(np_img, cv2.COLOR_RGB2GRAY)
         
-        # 埼玉県の地図領域（グレー背景値235未満）を抽出
         non_bg_pts = np.where(gray_img < 235)
         if len(non_bg_pts[0]) > 0:
             min_y, max_y = np.min(non_bg_pts[0]), np.max(non_bg_pts[0])
             min_x, max_x = np.min(non_bg_pts[1]), np.max(non_bg_pts[1])
             
-            # マージン（余白）を少しだけ残してトリミング
-            pad = 15
+            pad = 12
             crop_min_y = max(0, min_y - pad)
             crop_max_y = min(h, max_y + pad)
             crop_min_x = max(0, min_x - pad)
@@ -341,7 +368,6 @@ with tab1:
         else:
             cropped_img = np_img
 
-        # ① 高解像度拡大表示 (Streamlitコンテナ幅ぴったりに綺麗にフィット)
         st.image(cropped_img, use_container_width=True)
     else:
         st.warning("「20261001_bc6e30f7720a548fb561a31.png」がリポジトリ内に存在しません。画像をアップロードして配置してください。")
