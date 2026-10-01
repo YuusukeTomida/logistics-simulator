@@ -92,7 +92,7 @@ for i in range(len(df_a)):
         '一括担当': best_comp,
         'A社担当': False, 'B社担当': False, 'C社担当': False,
         'A社営業所': off_a, 'A社委託': sub_a, 'A社重量_t': wt_a, 'A社距離_km': dist_a, 'A社トンキロ': tk_a,
-        'B社営業所': off_b, 'B社委託': sub_b, 'B社重量_t': wt_b, 'B社距離_km': dist_b, 'B社トンキロ': tk_c,
+        'B社営業所': off_b, 'B社委託': sub_b, 'B社重量_t': wt_b, 'B社距離_km': dist_b, 'B社トンキロ': tk_b,
         'C社営業所': off_c, 'C社委託': sub_c, 'C社重量_t': wt_c, 'C社距離_km': dist_c, 'C社トンキロ': tk_c,
     })
 
@@ -179,7 +179,7 @@ for idx, r in edited_df.iterrows():
             active_records.append({
                 '市区町村コード': orig['市区町村コード'], '市区町村名': city_name,
                 '担当会社': 'A社', '会社表示': 'A社（委託）' if sub else 'A社',
-                '担当営業所': orig['A社営業所'], '営業所表示': f"{orig['A社営業所']}（委託）" if sub else orig['A社営業所'],
+                '担当営業所': orig['A社営業所'], '営業所表示': orig['A社営業所'] + ('（委託）' if sub else ''),
                 '重量_t': orig['A社重量_t'], '距離_km': orig['A社距離_km'], 'トンキロ': orig['A社トンキロ'],
             })
         if r['B社担当']:
@@ -187,7 +187,7 @@ for idx, r in edited_df.iterrows():
             active_records.append({
                 '市区町村コード': orig['市区町村コード'], '市区町村名': city_name,
                 '担当会社': 'B社', '会社表示': 'B社（委託）' if sub else 'B社',
-                '担当営業所': orig['B社営業所'], '営業所表示': f"{orig['B社営業所']}（委託）" if sub else orig['B社営業所'],
+                '担当営業所': orig['B社営業所'], '営業所表示': orig['B社営業所'] + ('（委託）' if sub else ''),
                 '重量_t': orig['B社重量_t'], '距離_km': orig['B社距離_km'], 'トンキロ': orig['B社トンキロ'],
             })
         if r['C社担当']:
@@ -195,23 +195,23 @@ for idx, r in edited_df.iterrows():
             active_records.append({
                 '市区町村コード': orig['市区町村コード'], '市区町村名': city_name,
                 '担当会社': 'C社', '会社表示': 'C社（委託）' if sub else 'C社',
-                '担当営業所': orig['C社営業所'], '営業所表示': f"{orig['C社営業所']}（委託）" if sub else orig['C社営業所'],
+                '担当営業所': orig['C社営業所'], '営業所表示': orig['C社営業所'] + ('（委託）' if sub else ''),
                 '重量_t': orig['C社重量_t'], '距離_km': orig['C社距離_km'], 'トンキロ': orig['C社トンキロ'],
             })
     else:
         if target_comp in ['A社', 'B社', 'C社']:
             c_code = target_comp[0]
-            sub = orig[f'{c_code}社委託']
-            off = orig[f'{c_code}社営業所']
+            sub = orig[c_code + '社委託']
+            off = orig[c_code + '社営業所']
             
             total_wt = orig['A社重量_t'] + orig['B社重量_t'] + orig['C社重量_t']
             total_tk = orig['A社トンキロ'] + orig['B社トンキロ'] + orig['C社トンキロ']
-            avg_dist = orig[f'{c_code}社距離_km']
+            avg_dist = orig[c_code + '社距離_km']
             
             active_records.append({
                 '市区町村コード': orig['市区町村コード'], '市区町村名': city_name,
-                '担当会社': target_comp, '会社表示': f"{target_comp}（委託）" if sub else target_comp,
-                '担当営業所': off, '営業所表示': f"{off}（委託）" if sub else off,
+                '担当会社': target_comp, '会社表示': target_comp + ('（委託）' if sub else ''),
+                '担当営業所': off, '営業所表示': off + ('（委託）' if sub else ''),
                 '重量_t': total_wt, '距離_km': avg_dist, 'トンキロ': total_tk,
             })
 
@@ -248,10 +248,10 @@ with tab1:
         diff_tk = row_data['トンキロ削減量']
         
         with col:
-            st.markdown(f"#### 🏢 {comp_name}")
-            st.metric("現状 トンキロ", f"{cur_tk:,.1f} ton-km")
-            st.metric("改正後 トンキロ", f"{rev_tk:,.1f} ton-km", delta=f"削減: {diff_tk:,.1f} ton-km ({row_data['削減率(%)']}%)")
-            st.caption(f"改正後 担当件数: {int(row_data['改正_担当件数'])} 件 / 重量: {row_data['改正_重量_t']:,.1f} t")
+            st.markdown("#### 🏢 " + comp_name)
+            st.metric("現状 トンキロ", "{:,.1f} ton-km".format(cur_tk))
+            st.metric("改正後 トンキロ", "{:,.1f} ton-km".format(rev_tk), delta="削減: {:,.1f} ton-km ({:.1f}%)".format(diff_tk, row_data['削減率(%)']))
+            st.caption("改正後 担当件数: {} 件 / 重量: {:,.1f} t".format(int(row_data['改正_担当件数']), row_data['改正_重量_t']))
 
     st.markdown("---")
     st.write("### 📊 会社毎の比較対比表")
@@ -289,4 +289,4 @@ with tab1:
             base_color = '#94A3B8'
             
         indiv_str = ', '.join(indivs) if indivs else 'なし'
-        popup_html = f"{c_name}
+        popup_html = str(c_name) + "
