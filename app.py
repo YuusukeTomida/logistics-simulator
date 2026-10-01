@@ -268,7 +268,19 @@ with tab1:
     st.subheader("🗺️ 埼玉県 市町村別受持選択マップ")
     st.caption("塗りつぶし：一括担当（赤: A社, 青: B社, 緑: C社, 灰: なし） / ドット：個別選択された会社の色")
 
-    m = folium.Map(location=[35.98, 139.35], zoom_start=9, tiles="CartoDB positron")
+    # APIキー不要の標準 OpenStreetMap タイルを指定し、埼玉県域（緯度35.7〜36.3, 経度138.8〜139.9）に表示を固定
+    m = folium.Map(
+        location=[35.98, 139.40],
+        zoom_start=10,
+        min_zoom=9,
+        max_zoom=12,
+        max_bounds=True,
+        min_lat=35.6,
+        max_lat=36.4,
+        min_lon=138.7,
+        max_lon=140.0,
+        tiles="OpenStreetMap"
+    )
     
     COLOR_MAP = {
         'A社': '#EF4444',
@@ -292,7 +304,7 @@ with tab1:
         
         folium.CircleMarker(
             location=coords,
-            radius=14,
+            radius=12,
             color=base_color,
             fill=True,
             fill_color=base_color,
