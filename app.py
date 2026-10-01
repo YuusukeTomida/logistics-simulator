@@ -192,7 +192,7 @@ for idx, r in edited_df.iterrows():
 
 sim_df = pd.DataFrame(active_records) if len(active_records) > 0 else pd.DataFrame()
 
-# タブ1: サマリー & 埼玉県市町村イラストマップ表示
+# タブ1: サマリー & 埼玉県市町村ブロックマップ表示
 with tab1:
     st.subheader("📈 会社毎の現状 vs 改正後（シミュレーション）サマリー")
     
@@ -240,17 +240,10 @@ with tab1:
     )
 
     st.markdown("---")
-    st.subheader("🗺️ 埼玉県 市町村別受持選択 白地図（イラストマップ）")
-    st.caption("塗り分け：一括担当（赤: A社, 青: B社, 緑: C社, 灰: なし） / ドット：個別選択された会社の色")
+    st.subheader("🗺️ 埼玉県 市町村別受持選択 白地図（ブロック表示）")
+    st.caption("塗り分け：一括担当（🔴: A社, 🔵: B社, 🟢: C社, ⚪: なし） / マーク：個別選択された会社")
 
-    COLOR_MAP = {
-        'A社': '#EF4444',
-        'B社': '#3B82F6',
-        'C社': '#10B981',
-        'なし': '#E2E8F0'
-    }
-
-    # 安全な単一行文字列結合によるHTMLグリッド生成
+    # Streamlit標準のコンテナと列を使った100%安全なブロック表示
     cols = st.columns(6)
     for idx, r in base_df.iterrows():
         c_name = r['市区町村名']
@@ -258,12 +251,64 @@ with tab1:
         bulk = info['一括担当']
         indivs = info['個別選択']
         
-        bg_col = COLOR_MAP.get(bulk, '#F1F5F9')
-        text_col = '#FFFFFF' if bulk in ['A社', 'B社', 'C社'] else '#1E293B'
-        
-        dots_html = ""
-        for comp_indiv in indivs:
-            dot_c = COLOR_MAP.get(comp_indiv, '#000000')
-            dots_html += ''
+        # 会社に応じた記号・バッジ表現
+        badge = "⚪ なし"
+        if bulk == "A社":
+            badge = "🔴 A社"
+        elif bulk == "B社":
+            badge = "🔵 B社"
+        elif bulk == "C社":
+            badge = "🟢 C社"
+            
+        indiv_badge = ""
+        if "A社" in indivs: indiv_badge += " 🔴"
+        if "B社" in indivs: indiv_badge += " 🔵"
+        if "C社" in indivs: indiv_badge += " 🟢"
 
-        card_html = '
+        with cols[idx % 6]:
+            with st.container(border=True):
+                st.markdown("**" + str(c_name) + "**")
+                st.caption(badge + indiv_badge)
+
+# タブ2: 会社別 & 営業所別 詳細集計
+with tab2:
+    st.subheader("🏢 会社別 集計（自社配達 vs 外部委託）")
+    st.caption("※ 「（委託）」指定の地域は区分して集計しています。")
+    
+    if not sim_df.empty:
+        comp_sub_summary = sim_df.groupby(['会社表示']).agg(
+            担当件数=('市区町村コード', 'count'),
+            合計配達重量_t=('重量_t', 'sum'),
+            平均配送距離_km=('距離_km', 'mean'),
+            合計トンキロ=('トンキロ', 'sum')
+        ).reset_index().rename(columns={'会社表示': '会社区分'})
+        
+        st.dataframe(
+            comp_sub_summary.style.format({
+                '合計配達重量_t': '{:,.2f}', '平均配送距離_km': '{:.2f}', '合計トンキロ': '{:,.2f}'
+            }),
+            use_container_width=True, hide_index=True
+        )
+    else:
+        st.info("データが未選択です。")
+
+    st.markdown("---")
+    st.subheader("🏬 営業所別 集計（自社配達 vs 外部委託）")
+    st.caption("※ 営業所ごとに「（委託）」区分で行を分けて表示しています。")
+    
+    if not sim_df.empty:
+        off_sub_summary = sim_df.groupby(['担当会社', '営業所表示']).agg(
+            担当件数=('市区町村コード', 'count'),
+            合計配達重量_t=('重量_t', 'sum'),
+            平均配送距離_km=('距離_km', 'mean'),
+            合計トンキロ=('トンキロ', 'sum')
+        ).reset_index().rename(columns={'担当会社': '会社', '営業所表示': '営業所区分'})
+        
+        st.dataframe(
+            off_sub_summary.style.format({
+                '合計配達重量_t': '{:,.2f}', '平均配送距離_km': '{:.2f}', '合計トンキロ': '{:,.2f}'
+            }),
+            use_container_width=True, hide_index=True
+        )
+    else:
+        st.info("データが未選択です。")
