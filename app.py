@@ -248,7 +248,7 @@ with tab1:
         diff_tk = row_data['トンキロ削減量']
         
         with col:
-            st.markdown("#### 🏢 " + comp_name)
+            st.markdown("#### 🏢 " + str(comp_name))
             st.metric("現状 トンキロ", "{:,.1f} ton-km".format(cur_tk))
             st.metric("改正後 トンキロ", "{:,.1f} ton-km".format(rev_tk), delta="削減: {:,.1f} ton-km ({:.1f}%)".format(diff_tk, row_data['削減率(%)']))
             st.caption("改正後 担当件数: {} 件 / 重量: {:,.1f} t".format(int(row_data['改正_担当件数']), row_data['改正_重量_t']))
@@ -288,5 +288,76 @@ with tab1:
         if bulk == 'なし' and len(indivs) > 0:
             base_color = '#94A3B8'
             
-        indiv_str = ', '.join(indivs) if indivs else 'なし'
-        popup_html = str(c_name) + "
+        indiv_str = ', '.join(indivs) if len(indivs) > 0 else 'なし'
+        
+        folium.CircleMarker(
+            location=coords,
+            radius=14,
+            color=base_color,
+            fill=True,
+            fill_color=base_color,
+            fill_opacity=0.6,
+            popup=str(c_name) + " | 一括: " + str(bulk) + " | 個別: " + str(indiv_str),
+            tooltip=str(c_name)
+        ).add_to(m)
+        
+        if len(indivs) > 0:
+            for d_idx, comp_indiv in enumerate(indivs):
+                dot_color = COLOR_MAP.get(comp_indiv, '#000000')
+                offset_lat = coords[0] + (d_idx - (len(indivs)-1)/2.0) * 0.015
+                folium.CircleMarker(
+                    location=[offset_lat, coords[1]],
+                    radius=5,
+                    color='#FFFFFF',
+                    weight=1,
+                    fill=True,
+                    fill_color=dot_color,
+                    fill_opacity=1.0,
+                    popup=str(c_name) + " - 個別: " + str(comp_indiv),
+                    tooltip=str(c_name) + " (" + str(comp_indiv) + ")"
+                ).add_to(m)
+
+    st_folium(m, width="100%", height=500)
+
+# タブ2: 会社別 & 営業所別 詳細集計
+with tab2:
+    st.subheader("🏢 会社別 集計（自社配達 vs 外部委託）")
+    st.caption("※ E列「◯」の地域は「（委託）」として区分集計しています。")
+    
+    if not sim_df.empty:
+        comp_sub_summary = sim_df.groupby(['会社表示']).agg(
+            担当件数=('市区町村コード', 'count'),
+            合計配達重量_t=('重量_t', 'sum'),
+            平均配送距離_km=('距離_km', 'mean'),
+            合計トンキロ=('トンキロ', 'sum')
+        ).reset_index().rename(columns={'会社表示': '会社区分'})
+        
+        st.dataframe(
+            comp_sub_summary.style.format({
+                '合計配達重量_t': '{:,.2f}', '平均配送距離_km': '{:.2f}', '合計トンキロ': '{:,.2f}'
+            }),
+            use_container_width=True, hide_index=True
+        )
+    else:
+        st.info("データが未選択です。")
+
+    st.markdown("---")
+    st.subheader("🏬 営業所別 集計（自社配達 vs 外部委託）")
+    st.caption("※ 営業所ごとに委託地域は「（委託）」として区分表示しています。")
+    
+    if not sim_df.empty:
+        off_sub_summary = sim_df.groupby(['担当会社', '営業所表示']).agg(
+            担当件数=('市区町村コード', 'count'),
+            合計配達重量_t=('重量_t', 'sum'),
+            平均配送距離_km=('距離_km', 'mean'),
+            合計トンキロ=('トンキロ', 'sum')
+        ).reset_index().rename(columns={'担当会社': '会社', '営業所表示': '営業所区分'})
+        
+        st.dataframe(
+            off_sub_summary.style.format({
+                '合計配達重量_t': '{:,.2f}', '平均配送距離_km': '{:.2f}', '合計トンキロ': '{:,.2f}'
+            }),
+            use_container_width=True, hide_index=True
+        )
+    else:
+        st.info("データが未選択です。")
