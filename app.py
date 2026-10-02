@@ -325,7 +325,7 @@ with tab1:
         src_img = cv2.imread(map_img_path)
         h, w, _ = src_img.shape
         
-        # 1. 境界線の抽出（黒線マスクの抽出）
+        # 1. 境界線の抽出（二値化）
         gray = cv2.cvtColor(src_img, cv2.COLOR_BGR2GRAY)
         if np.mean(gray) < 100:
             line_bin = (gray > 25).astype(np.uint8) * 255
@@ -335,7 +335,17 @@ with tab1:
         kernel = np.ones((3, 3), np.uint8)
         line_bin_dilated = cv2.dilate(line_bin, kernel, iterations=1)
         
-        # ★重要修正：ペイント中は境界線を一切描画せず「完全な白地キャンバス」を作成★
+        # マップ画像の縦横比に合わせてシード座標(1024x560基準)を補正
+        scale_x = w / 1024.0
+        scale_y = h / 560.0
+
+        # ★背景（県外）保護用マスクの生成（黒線が存在する一時画像で(0,0)から洪水）★
+        bg_protection_mask = np.zeros((h + 2, w + 2), np.uint8)
+        temp_line_canvas = np.full((h, w, 3), 255, dtype=np.uint8)
+        temp_line_canvas[line_bin_dilated == 255] = (0, 0, 0)
+        cv2.floodFill(temp_line_canvas, bg_protection_mask, (0, 0), (255, 255, 255), (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
+
+        # 実ペイント用キャンバス（ペイント中は純白）
         canvas_rgb = np.full((h, w, 3), 255, dtype=np.uint8)
         
         # RGB カラーマップ定義
@@ -345,16 +355,8 @@ with tab1:
             'C社': (16, 185, 129),
             'なし': (220, 225, 230)
         }
-        
-        # マップ画像の縦横比に合わせてシード座標(1024x560基準)を補正
-        scale_x = w / 1024.0
-        scale_y = h / 560.0
-        
-        # 県外（マップ外側の背景領域）ペイント保護マスク
-        bg_protection_mask = np.zeros((h + 2, w + 2), np.uint8)
-        cv2.floodFill(canvas_rgb.copy(), bg_protection_mask, (0, 0), (255, 255, 255), (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
 
-        # 1. 各72市区町村のメイン領域をFloodFillペイント（純白キャンバスに対して実行）
+        # 1. 各72市区町村のメイン領域をFloodFillペイント
         for c_name, (raw_sx, raw_sy) in CITY_SEEDS.items():
             info = map_status_dict.get(c_name, {'一括担当': 'なし', '個別選択': []})
             bulk = info['一括担当']
@@ -382,7 +384,7 @@ with tab1:
                             if found: break
                         if found: break
                 
-                # ペイント実行
+                # 保護マスクをコピーして純白キャンバスへペイント実行
                 m_curr = bg_protection_mask.copy()
                 cv2.floodFill(canvas_rgb, m_curr, (sx, sy), fill_rgb, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
                 
@@ -423,7 +425,7 @@ with tab1:
                     m_hole = bg_protection_mask.copy()
                     cv2.floodFill(canvas_rgb, m_hole, (cx, cy), found_color, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
 
-        # ★要不バグ完全根絶★ 全地域ペイント完了後に「黒色境界線」を一番上に上書き描画！
+        # ★全地域ペイント完了後に「黒色境界線」を一番上にオーバーレイ上書き描画★
         canvas_rgb[line_bin_dilated == 255] = (0, 0, 0)
 
         # 3. 不要な背景余白を自動クロップしてフィット表示
