@@ -37,7 +37,7 @@ except Exception as e:
     st.error("データの読み込みに失敗しました。A, B, C シートが含まれるExcelファイルであることを確認してください。")
     st.stop()
 
-# 最新の座標データに基づく領域シード座標 (X, Y)
+# 座標基準(1024x560)に基づく最新の領域シード座標 (X, Y)
 CITY_SEEDS = {
     'さいたま市西区': (745, 388),
     'さいたま市北区': (782, 365),
@@ -323,9 +323,12 @@ with tab1:
 
     if map_img_path and os.path.exists(map_img_path):
         src_img = cv2.imread(map_img_path)
+        
+        # 1. 画像の基準解像度（1024x560）への正規化
+        src_img = cv2.resize(src_img, (1024, 560), interpolation=cv2.INTER_AREA)
         h, w, _ = src_img.shape
         
-        # 1. 境界線の抽出（二値化）
+        # 2. 境界線の抽出（二値化）
         gray = cv2.cvtColor(src_img, cv2.COLOR_BGR2GRAY)
         if np.mean(gray) < 100:
             line_bin = (gray > 25).astype(np.uint8) * 255
@@ -335,18 +338,9 @@ with tab1:
         kernel = np.ones((3, 3), np.uint8)
         line_bin_dilated = cv2.dilate(line_bin, kernel, iterations=1)
         
-        # マップ画像の縦横比に合わせてシード座標(1024x560基準)を補正
-        scale_x = w / 1024.0
-        scale_y = h / 560.0
-
-        # ★背景（県外）保護用マスクの生成（黒線が存在する一時画像で(0,0)から洪水）★
-        bg_protection_mask = np.zeros((h + 2, w + 2), np.uint8)
-        temp_line_canvas = np.full((h, w, 3), 255, dtype=np.uint8)
-        temp_line_canvas[line_bin_dilated == 255] = (0, 0, 0)
-        cv2.floodFill(temp_line_canvas, bg_protection_mask, (0, 0), (255, 255, 255), (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
-
-        # 実ペイント用キャンバス（ペイント中は純白）
+        # 3. ペイント用キャンバス（黒色の境界線をあらかじめセットして県外ペイント流出を完全ガード）
         canvas_rgb = np.full((h, w, 3), 255, dtype=np.uint8)
+        canvas_rgb[line_bin_dilated == 255] = (0, 0, 0) # 黒線で県外と県内を分離遮断！
         
         # RGB カラーマップ定義
         RGB_MAP = {
@@ -356,8 +350,12 @@ with tab1:
             'なし': (220, 225, 230)
         }
 
-        # 1. 各72市区町村のメイン領域をFloodFillペイント
-        for c_name, (raw_sx, raw_sy) in CITY_SEEDS.items():
+        # 県外（マップ外側の背景領域）ペイント保護マスクの生成（黒線が存在するキャンバスで(0,0)から洪水）
+        bg_protection_mask = np.zeros((h + 2, w + 2), np.uint8)
+        cv2.floodFill(canvas_rgb.copy(), bg_protection_mask, (0, 0), (255, 255, 255), (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
+
+        # 4. 各72市区町村のメイン領域をFloodFillペイント
+        for c_name, (sx, sy) in CITY_SEEDS.items():
             info = map_status_dict.get(c_name, {'一括担当': 'なし', '個別選択': []})
             bulk = info['一括担当']
             indivs = info['個別選択']
@@ -366,16 +364,13 @@ with tab1:
             if bulk == 'なし' and len(indivs) > 0:
                 fill_rgb = (220, 225, 230)
                 
-            sx = int(raw_sx * scale_x)
-            sy = int(raw_sy * scale_y)
-            
             if 0 <= sx < w and 0 <= sy < h:
-                # 黒線膨張画像で線から離れた領域に安全に退避
+                # 黒線の上に当たっている場合は、近傍の「黒線でない白地領域(line_bin_dilated == 0)」へ安全退避
                 if line_bin_dilated[sy, sx] == 255:
                     found = False
                     for r in range(1, 25):
-                        for dy in range(-r, r+1, 2):
-                            for dx in range(-r, r+1, 2):
+                        for dy in range(-r, r+1):
+                            for dx in range(-r, r+1):
                                 nx, ny = sx + dx, sy + dy
                                 if 0 <= nx < w and 0 <= ny < h and line_bin_dilated[ny, nx] == 0:
                                     sx, sy = nx, ny
@@ -384,9 +379,10 @@ with tab1:
                             if found: break
                         if found: break
                 
-                # 保護マスクをコピーして純白キャンバスへペイント実行
-                m_curr = bg_protection_mask.copy()
-                cv2.floodFill(canvas_rgb, m_curr, (sx, sy), fill_rgb, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
+                # 白地ピクセルに確実に着地したシードから保護マスクをコピーして着色実行
+                if line_bin_dilated[sy, sx] == 0:
+                    m_curr = bg_protection_mask.copy()
+                    cv2.floodFill(canvas_rgb, m_curr, (sx, sy), fill_rgb, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
                 
                 # ドット描画（個別選択時）
                 if len(indivs) > 0:
@@ -396,7 +392,7 @@ with tab1:
                         cv2.circle(canvas_rgb, (int(dot_x), sy), 7, (255, 255, 255), -1)
                         cv2.circle(canvas_rgb, (int(dot_x), sy), 6, dot_rgb, -1)
 
-        # 2. 埼玉県内の「小さな未塗り白地スペース」を精密に自動補填（area < 1200）
+        # 5. 埼玉県内の「小さな未塗り白地スペース」を精密に自動補填（area < 1200）
         gray_temp = cv2.cvtColor(canvas_rgb, cv2.COLOR_RGB2GRAY)
         white_holes = (gray_temp > 250).astype(np.uint8)
         num_holes, labels_holes, stats_holes, _ = cv2.connectedComponentsWithStats(white_holes)
@@ -425,10 +421,10 @@ with tab1:
                     m_hole = bg_protection_mask.copy()
                     cv2.floodFill(canvas_rgb, m_hole, (cx, cy), found_color, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
 
-        # ★全地域ペイント完了後に「黒色境界線」を一番上にオーバーレイ上書き描画★
+        # 6. 黒色境界線を一番上にはっきりとオーバーレイ描画
         canvas_rgb[line_bin_dilated == 255] = (0, 0, 0)
 
-        # 3. 不要な背景余白を自動クロップしてフィット表示
+        # 7. 不要な背景余白を自動クロップしてフィット表示
         gray_check = cv2.cvtColor(canvas_rgb, cv2.COLOR_RGB2GRAY)
         non_bg = np.where(gray_check < 250)
         
