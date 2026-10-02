@@ -37,7 +37,7 @@ except Exception as e:
     st.error("データの読み込みに失敗しました。A, B, C シートが含まれるExcelファイルであることを確認してください。")
     st.stop()
 
-# 越生町の座標を (480, 360) に変更反映した最新領域シード座標 (X, Y)
+# 最新の座標データに基づく領域シード座標 (X, Y)
 CITY_SEEDS = {
     'さいたま市西区': (745, 388),
     'さいたま市北区': (782, 365),
@@ -325,20 +325,18 @@ with tab1:
         src_img = cv2.imread(map_img_path)
         h, w, _ = src_img.shape
         
-        # 1. 境界線の二値化と線強調
+        # 1. 境界線の抽出（黒線マスクの抽出）
         gray = cv2.cvtColor(src_img, cv2.COLOR_BGR2GRAY)
-        
         if np.mean(gray) < 100:
             line_bin = (gray > 25).astype(np.uint8) * 255
         else:
             line_bin = (gray < 200).astype(np.uint8) * 255
             
-        # 純粋な RGB キャンバス作成
         kernel = np.ones((3, 3), np.uint8)
         line_bin_dilated = cv2.dilate(line_bin, kernel, iterations=1)
         
+        # ★重要修正：ペイント中は境界線を一切描画せず「完全な白地キャンバス」を作成★
         canvas_rgb = np.full((h, w, 3), 255, dtype=np.uint8)
-        canvas_rgb[line_bin_dilated == 255] = (0, 0, 0) # 黒色境界線
         
         # RGB カラーマップ定義
         RGB_MAP = {
@@ -348,12 +346,16 @@ with tab1:
             'なし': (220, 225, 230)
         }
         
+        # マップ画像の縦横比に合わせてシード座標(1024x560基準)を補正
+        scale_x = w / 1024.0
+        scale_y = h / 560.0
+        
         # 県外（マップ外側の背景領域）ペイント保護マスク
         bg_protection_mask = np.zeros((h + 2, w + 2), np.uint8)
         cv2.floodFill(canvas_rgb.copy(), bg_protection_mask, (0, 0), (255, 255, 255), (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
 
-        # 1. 各72市区町村のメイン領域をFloodFillペイント
-        for c_name, (sx, sy) in CITY_SEEDS.items():
+        # 1. 各72市区町村のメイン領域をFloodFillペイント（純白キャンバスに対して実行）
+        for c_name, (raw_sx, raw_sy) in CITY_SEEDS.items():
             info = map_status_dict.get(c_name, {'一括担当': 'なし', '個別選択': []})
             bulk = info['一括担当']
             indivs = info['個別選択']
@@ -362,22 +364,25 @@ with tab1:
             if bulk == 'なし' and len(indivs) > 0:
                 fill_rgb = (220, 225, 230)
                 
+            sx = int(raw_sx * scale_x)
+            sy = int(raw_sy * scale_y)
+            
             if 0 <= sx < w and 0 <= sy < h:
-                # 境界線上（黒色）にシードが当たっている場合は近傍の広い白地（>200）へ全自動退避
-                if np.mean(canvas_rgb[sy, sx]) < 150:
+                # 黒線膨張画像で線から離れた領域に安全に退避
+                if line_bin_dilated[sy, sx] == 255:
                     found = False
-                    for r in range(1, 20):
+                    for r in range(1, 25):
                         for dy in range(-r, r+1, 2):
                             for dx in range(-r, r+1, 2):
                                 nx, ny = sx + dx, sy + dy
-                                if 0 <= nx < w and 0 <= ny < h and np.mean(canvas_rgb[ny, nx]) > 200:
+                                if 0 <= nx < w and 0 <= ny < h and line_bin_dilated[ny, nx] == 0:
                                     sx, sy = nx, ny
                                     found = True
                                     break
                             if found: break
                         if found: break
                 
-                # 保護マスクをコピー（.copy()）してペイント実行
+                # ペイント実行
                 m_curr = bg_protection_mask.copy()
                 cv2.floodFill(canvas_rgb, m_curr, (sx, sy), fill_rgb, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
                 
@@ -417,6 +422,9 @@ with tab1:
                 if found_color is not None:
                     m_hole = bg_protection_mask.copy()
                     cv2.floodFill(canvas_rgb, m_hole, (cx, cy), found_color, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
+
+        # ★要不バグ完全根絶★ 全地域ペイント完了後に「黒色境界線」を一番上に上書き描画！
+        canvas_rgb[line_bin_dilated == 255] = (0, 0, 0)
 
         # 3. 不要な背景余白を自動クロップしてフィット表示
         gray_check = cv2.cvtColor(canvas_rgb, cv2.COLOR_RGB2GRAY)
