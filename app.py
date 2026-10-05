@@ -45,7 +45,7 @@ def generate_office_colors(df_a, df_b, df_c):
     
     office_color_map = {}
     
-    # 修正③: 営業所ごとの塗りをより鮮明でハッキリ区別できる濃淡グラデーションに強化
+    # 営業所ごとの塗りを鮮明な濃淡グラデーションで生成
     n_a = len(a_offices)
     for idx, off in enumerate(a_offices):
         f = 0.45 + 0.55 * (idx / max(n_a - 1, 1)) if n_a > 1 else 0.85
@@ -202,7 +202,7 @@ for idx, r in edited_df.iterrows():
     target_comp = r['一括担当']
     target_off = r['一括担当 営業所']
     
-    # 修正①: 担当会社と営業所の整合性を全自動制御・補正
+    # 修正①: 担当会社と営業所の選択連動を補正
     if target_comp == 'A社' and target_off not in A_OFFICES:
         target_off = orig['A社営業所']
     elif target_comp == 'B社' and target_off not in B_OFFICES:
@@ -318,7 +318,7 @@ with tab1:
     st.subheader("🗺️ 埼玉県 市町村別受持選択 白地図エリアマップ")
     st.caption("塗り分け：営業所毎の配色（🔴 A社系: 赤グラデーション, 🔵 B社系: 青グラデーション, 🟢 C社系: 緑グラデーション, ⚪ 未設定: 灰）")
 
-    # 修正②: ■を大きくして（22px * 16px カラーボックス）、営業所ごとの割り当て色で塗りつぶす表示に完全改修
+    # 修正②: 大型カラーボックスによる営業所別凡例表示
     st.markdown("##### 📌 営業所別 カラー凡例（濃淡グラデーション）")
     leg_cols = st.columns(3)
     
@@ -327,4 +327,4 @@ with tab1:
         for off in A_OFFICES:
             c = OFFICE_COLOR_MAP.get(off, (239, 68, 68))
             hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
-            st.markdown(f'
+            st.write(f'
