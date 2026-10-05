@@ -36,12 +36,13 @@ except Exception as e:
     st.error("データの読み込みに失敗しました。J, T シートが含まれるExcelファイルであることを確認してください。")
     st.stop()
 
-# 各社の営業所リストとグラデーションカラーマップを動的生成
+# 各社の営業所リストとグラデーションカラーマップを社別に分離生成（同名営業所の色の混同防止）
 def generate_office_colors(df_j, df_t):
     j_offices = sorted(list(set(df_j['J社営業所名'].dropna().astype(str).tolist())))
     t_offices = sorted(list(set(df_t['T社営業所名'].dropna().astype(str).tolist())))
     
-    office_color_map = {}
+    j_office_color_map = {}
+    t_office_color_map = {}
     
     n_j = len(j_offices)
     for idx, off in enumerate(j_offices):
@@ -49,7 +50,7 @@ def generate_office_colors(df_j, df_t):
         r = int(255 * f)
         g = int(20 * (1.0 - f))
         b = int(20 * (1.0 - f))
-        office_color_map[off] = (r, g, b)
+        j_office_color_map[off] = (r, g, b)
         
     n_t = len(t_offices)
     for idx, off in enumerate(t_offices):
@@ -57,14 +58,14 @@ def generate_office_colors(df_j, df_t):
         r = int(30 * (1.0 - f))
         g = int(140 * f)
         b = int(255 * f)
-        office_color_map[off] = (r, g, b)
+        t_office_color_map[off] = (r, g, b)
         
-    return office_color_map, j_offices, t_offices
+    return j_office_color_map, t_office_color_map, j_offices, t_offices
 
-OFFICE_COLOR_MAP, J_OFFICES, T_OFFICES = generate_office_colors(df_j, df_t)
+J_OFFICE_COLOR_MAP, T_OFFICE_COLOR_MAP, J_OFFICES, T_OFFICES = generate_office_colors(df_j, df_t)
 ALL_OFFICES = sorted(list(set(J_OFFICES + T_OFFICES)))
 
-# 『座標_5.xlsx』E列（改正③）準拠の最新座標 (1024x1400解像度基準)
+# 『座標_5.xlsx』E列（改正③）準拠の基本座標 (1024x1400解像度基準)
 CITY_SEEDS = {
     '能勢町': (542, 143),
     '豊能町': (635, 232),
@@ -138,6 +139,12 @@ CITY_SEEDS = {
     '泉南市': (318, 1251),
     '阪南市': (239, 1280),
     '岬町': (118, 1336)
+}
+
+# 連動して着色する離れ島（夢洲・舞洲／関西国際空港島など）の追加座標
+EXTRA_SEEDS = {
+    '大阪市此花区': [(477, 710), (503, 713)], # 夢洲・舞洲エリア
+    '泉佐野市': [(236, 1101)]                 # 関西国際空港島エリア
 }
 
 # 3. データ整理・統合
@@ -294,14 +301,14 @@ with tab3:
     with leg_cols[0]:
         st.write("**🔴 J社 営業所**")
         for off in J_OFFICES:
-            c = OFFICE_COLOR_MAP.get(off, (239, 68, 68))
+            c = J_OFFICE_COLOR_MAP.get(off, (239, 68, 68))
             hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
             st.write("■ " + str(off) + " (" + str(hex_c) + ")")
             
     with leg_cols[1]:
         st.write("**🔵 T社 営業所**")
         for off in T_OFFICES:
-            c = OFFICE_COLOR_MAP.get(off, (59, 130, 246))
+            c = T_OFFICE_COLOR_MAP.get(off, (59, 130, 246))
             hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
             st.write("■ " + str(off) + " (" + str(hex_c) + ")")
 
@@ -337,41 +344,50 @@ with tab3:
             bulk_off = info['一括営業所']
             indivs = info['個別選択']
             
-            if bulk != 'なし' and bulk_off in OFFICE_COLOR_MAP:
-                fill_rgb = OFFICE_COLOR_MAP[bulk_off]
+            # 社別にカラーマップを参照（同名営業所の色混同を完全防止）
+            if bulk == 'J社' and bulk_off in J_OFFICE_COLOR_MAP:
+                fill_rgb = J_OFFICE_COLOR_MAP[bulk_off]
+            elif bulk == 'T社' and bulk_off in T_OFFICE_COLOR_MAP:
+                fill_rgb = T_OFFICE_COLOR_MAP[bulk_off]
             else:
                 DEFAULT_RGB = {'J社': (239, 68, 68), 'T社': (59, 130, 246), 'なし': (220, 225, 230)}
                 fill_rgb = DEFAULT_RGB.get(bulk, (220, 225, 230))
                 
             if bulk == 'なし' and len(indivs) > 0:
                 fill_rgb = (220, 225, 230)
-                
-            if 0 <= sx < w and 0 <= sy < h:
-                # 黒枠線の上の場合は周囲の空白ピクセルを自動探索
-                if line_bin_dilated[sy, sx] == 255:
-                    found = False
-                    for r in range(1, 15):
-                        for dy in range(-r, r+1):
-                            for dx in range(-r, r+1):
-                                nx, ny = sx + dx, sy + dy
-                                if 0 <= nx < w and 0 <= ny < h and line_bin_dilated[ny, nx] == 0:
-                                    sx, sy = nx, ny
-                                    found = True
-                                    break
-                            if found: break
-                        if found: break
 
-                if line_bin_dilated[sy, sx] == 0:
-                    m_curr = bg_protection_mask.copy()
-                    cv2.floodFill(canvas_rgb, m_curr, (sx, sy), fill_rgb, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
+            # 塗りつぶし対象の全座標（本土＋離島追加分）
+            target_coords = [(sx, sy)]
+            if c_name in EXTRA_SEEDS:
+                target_coords.extend(EXTRA_SEEDS[c_name])
                 
-                if len(indivs) > 0:
-                    DEFAULT_RGB = {'J社': (239, 68, 68), 'T社': (59, 130, 246)}
-                    for d_idx, comp_indiv in enumerate(indivs):
-                        dot_rgb = DEFAULT_RGB.get(comp_indiv, (0, 0, 0))
-                        dot_x = sx + (d_idx - (len(indivs)-1)/2.0) * 16
-                        cv2.circle(canvas_rgb, (int(dot_x), sy), 7, (255, 255, 255), -1)
-                        cv2.circle(canvas_rgb, (int(dot_x), sy), 6, dot_rgb, -1)
+            for cs_x, cs_y in target_coords:
+                if 0 <= cs_x < w and 0 <= cs_y < h:
+                    # 黒枠線の上の場合は周囲の空白ピクセルを自動探索
+                    if line_bin_dilated[cs_y, cs_x] == 255:
+                        found = False
+                        for r in range(1, 15):
+                            for dy in range(-r, r+1):
+                                for dx in range(-r, r+1):
+                                    nx, ny = cs_x + dx, cs_y + dy
+                                    if 0 <= nx < w and 0 <= ny < h and line_bin_dilated[ny, nx] == 0:
+                                        cs_x, cs_y = nx, ny
+                                        found = True
+                                        break
+                                if found: break
+                            if found: break
+
+                    if line_bin_dilated[cs_y, cs_x] == 0:
+                        m_curr = bg_protection_mask.copy()
+                        cv2.floodFill(canvas_rgb, m_curr, (cs_x, cs_y), fill_rgb, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
+                    
+            if 0 <= sx < w and 0 <= sy < h and len(indivs) > 0:
+                DEFAULT_RGB = {'J社': (239, 68, 68), 'T社': (59, 130, 246)}
+                for d_idx, comp_indiv in enumerate(indivs):
+                    dot_rgb = DEFAULT_RGB.get(comp_indiv, (0, 0, 0))
+                    dot_x = sx + (d_idx - (len(indivs)-1)/2.0) * 16
+                    cv2.circle(canvas_rgb, (int(dot_x), sy), 7, (255, 255, 255), -1)
+                    cv2.circle(canvas_rgb, (int(dot_x), sy), 6, dot_rgb, -1)
 
         canvas_rgb[line_bin_dilated == 255] = (0, 0, 0)
 
