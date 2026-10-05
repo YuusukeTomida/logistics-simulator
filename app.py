@@ -202,7 +202,7 @@ for idx, r in edited_df.iterrows():
     target_comp = r['一括担当']
     target_off = r['一括担当 営業所']
     
-    # 修正①: 担当会社と営業所の選択連動を補正
+    # 担当会社と営業所の選択連動補正
     if target_comp == 'A社' and target_off not in A_OFFICES:
         target_off = orig['A社営業所']
     elif target_comp == 'B社' and target_off not in B_OFFICES:
@@ -318,7 +318,7 @@ with tab1:
     st.subheader("🗺️ 埼玉県 市町村別受持選択 白地図エリアマップ")
     st.caption("塗り分け：営業所毎の配色（🔴 A社系: 赤グラデーション, 🔵 B社系: 青グラデーション, 🟢 C社系: 緑グラデーション, ⚪ 未設定: 灰）")
 
-    # 修正②: 大型カラーボックスによる営業所別凡例表示
+    # 凡例表示（構文エラー回避のため完全にクリーンなHTML・ダブルクォートで構築）
     st.markdown("##### 📌 営業所別 カラー凡例（濃淡グラデーション）")
     leg_cols = st.columns(3)
     
@@ -327,4 +327,4 @@ with tab1:
         for off in A_OFFICES:
             c = OFFICE_COLOR_MAP.get(off, (239, 68, 68))
             hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
-            st.write(f'
+            html_box = f'
