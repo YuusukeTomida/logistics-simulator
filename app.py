@@ -45,7 +45,7 @@ def generate_office_colors(df_a, df_b, df_c):
     
     office_color_map = {}
     
-    # A社 (赤系ベース: R高, G/B調整)
+    # A社 (赤系ベース)
     n_a = max(len(a_offices), 1)
     for idx, off in enumerate(a_offices):
         factor = 0.5 + 0.5 * (idx / max(n_a - 1, 1))
@@ -54,7 +54,7 @@ def generate_office_colors(df_a, df_b, df_c):
         b = int(60 * (1 - factor * 0.5))
         office_color_map[off] = (r, g, b)
         
-    # B社 (青系ベース: B高, R/G調整)
+    # B社 (青系ベース)
     n_b = max(len(b_offices), 1)
     for idx, off in enumerate(b_offices):
         factor = 0.5 + 0.5 * (idx / max(n_b - 1, 1))
@@ -63,7 +63,7 @@ def generate_office_colors(df_a, df_b, df_c):
         b = int(255 * factor)
         office_color_map[off] = (r, g, b)
         
-    # C社 (緑系ベース: G高, R/B調整)
+    # C社 (緑系ベース)
     n_c = max(len(c_offices), 1)
     for idx, off in enumerate(c_offices):
         factor = 0.5 + 0.5 * (idx / max(n_c - 1, 1))
@@ -320,20 +320,23 @@ with tab1:
         for off in A_OFFICES:
             c = OFFICE_COLOR_MAP.get(off, (239, 68, 68))
             hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
-            st.markdown(f'■ {off}', unsafe_allow_html=True)
+            html_code = f'■ {off}'
+            st.markdown(html_code, unsafe_allow_html=True)
             
     with leg_cols[1]:
         st.markdown("**🔵 B社 営業所**")
         for off in B_OFFICES:
             c = OFFICE_COLOR_MAP.get(off, (59, 130, 246))
             hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
-            st.markdown(f'■ {off}', unsafe_allow_html=True)
+            html_code = f'■ {off}'
+            st.markdown(html_code, unsafe_allow_html=True)
             
     with leg_cols[2]:
         st.markdown("**🟢 C社 営業所**")
         for off in C_OFFICES:
             c = OFFICE_COLOR_MAP.get(off, (16, 185, 129))
             hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
-            st.markdown(f'■ {off}', unsafe_allow_html=True)
+            html_code = f'■ {off}'
+            st.markdown(html_code, unsafe_allow_html=True)
 
     st.markdown("
