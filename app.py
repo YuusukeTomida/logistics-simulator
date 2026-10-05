@@ -37,80 +37,67 @@ except Exception as e:
     st.error("データの読み込みに失敗しました。A, B, C シートが含まれるExcelファイルであることを確認してください。")
     st.stop()
 
-# 座標修正（西区: 760,388 / 大宮区: 782,388 / 越生町: 453,351）を反映した最新領域シード座標 (X, Y)
+# 各社の営業所リストとグラデーションカラーマップを動的生成
+def generate_office_colors(df_a, df_b, df_c):
+    a_offices = sorted(list(set(df_a['A社営業所名'].dropna().astype(str).tolist())))
+    b_offices = sorted(list(set(df_b['B社営業所名'].dropna().astype(str).tolist())))
+    c_offices = sorted(list(set(df_c['C社営業所名'].dropna().astype(str).tolist())))
+    
+    office_color_map = {}
+    
+    # A社 (赤系ベース: R高, G/B調整)
+    n_a = max(len(a_offices), 1)
+    for idx, off in enumerate(a_offices):
+        factor = 0.5 + 0.5 * (idx / max(n_a - 1, 1))
+        r = int(255 * factor)
+        g = int(60 * (1 - factor * 0.5))
+        b = int(60 * (1 - factor * 0.5))
+        office_color_map[off] = (r, g, b)
+        
+    # B社 (青系ベース: B高, R/G調整)
+    n_b = max(len(b_offices), 1)
+    for idx, off in enumerate(b_offices):
+        factor = 0.5 + 0.5 * (idx / max(n_b - 1, 1))
+        r = int(50 * (1 - factor * 0.5))
+        g = int(120 * factor)
+        b = int(255 * factor)
+        office_color_map[off] = (r, g, b)
+        
+    # C社 (緑系ベース: G高, R/B調整)
+    n_c = max(len(c_offices), 1)
+    for idx, off in enumerate(c_offices):
+        factor = 0.5 + 0.5 * (idx / max(n_c - 1, 1))
+        r = int(20 * (1 - factor * 0.5))
+        g = int(210 * factor)
+        b = int(120 * factor)
+        office_color_map[off] = (r, g, b)
+        
+    return office_color_map, a_offices, b_offices, c_offices
+
+OFFICE_COLOR_MAP, A_OFFICES, B_OFFICES, C_OFFICES = generate_office_colors(df_a, df_b, df_c)
+ALL_OFFICES = sorted(list(set(A_OFFICES + B_OFFICES + C_OFFICES)))
+
+# 座標基準(1024x560)に基づく最新の領域シード座標 (X, Y)
 CITY_SEEDS = {
-    'さいたま市西区': (760, 388),
-    'さいたま市北区': (782, 365),
-    'さいたま市大宮区': (782, 388),
-    'さいたま市見沼区': (822, 350),
-    'さいたま市中央区': (782, 405),
-    'さいたま市桜区': (760, 430),
-    'さいたま市浦和区': (804, 405),
-    'さいたま市南区': (810, 480),
-    'さいたま市緑区': (875, 410),
-    'さいたま市岩槻区': (855, 325),
-    '川越市': (677, 398),
-    '熊谷市': (588, 175),
-    '川口市': (855, 480),
-    '行田市': (651, 180),
-    '秩父市': (240, 390),
-    '所沢市': (634, 475),
-    '飯能市': (520, 460),
-    '加須市': (748, 195),
-    '本庄市': (360, 115),
-    '東松山市': (584, 285),
-    '春日部市': (895, 355),
-    '狭山市': (590, 425),
-    '羽生市': (708, 145),
-    '鴻巣市': (651, 225),
-    '深谷市': (450, 160),
-    '上尾市': (718, 335),
-    '草加市': (928, 471),
-    '越谷市': (928, 410),
-    '蕨市': (815, 480),
-    '戸田市': (807, 497),
-    '入間市': (520, 497),
-    '朝霞市': (750, 497),
-    '志木市': (740, 480),
-    '和光市': (773, 522),
-    '新座市': (724, 522),
-    '桶川市': (714, 296),
-    '久喜市': (775, 230),
-    '北本市': (673, 280),
-    '八潮市': (960, 492),
-    '富士見市': (718, 435),
-    '三郷市': (987, 475),
-    '蓮田市': (791, 285),
-    '坂戸市': (635, 330),
-    '幸手市': (876, 226),
-    '鶴ヶ島市': (580, 355),
-    '日高市': (543, 395),
-    '吉川市': (987, 411),
-    'ふじみ野市': (698, 435),
-    '白岡市': (822, 295),
-    '伊奈町': (782, 296),
-    '三芳町': (703, 472),
-    '毛呂山町': (511, 355),
-    '越生町': (453, 351), # 越生町本体の純粋な白地中央座標
-    '滑川町': (558, 255),
-    '嵐山町': (529, 260),
-    '小川町': (440, 230),
-    '川島町': (677, 315),
-    '吉見町': (630, 270),
-    '鳩山町': (538, 315),
-    'ときがわ町': (490, 280),
-    '横瀬町': (335, 355),
-    '皆野町': (360, 260),
-    '長瀞町': (360, 170),
-    '小鹿野町': (175, 290),
-    '東秩父村': (400, 295),
-    '美里町': (395, 155),
-    '神川町': (300, 150),
-    '上里町': (363, 34),
-    '寄居町': (395, 170),
-    '宮代町': (860, 280),
-    '杉戸町': (876, 280),
-    '松伏町': (960, 355)
+    'さいたま市西区': (760, 388), 'さいたま市北区': (782, 365), 'さいたま市大宮区': (782, 388),
+    'さいたま市見沼区': (822, 350), 'さいたま市中央区': (782, 405), 'さいたま市桜区': (760, 430),
+    'さいたま市浦和区': (804, 405), 'さいたま市南区': (810, 480), 'さいたま市緑区': (875, 410),
+    'さいたま市岩槻区': (855, 325), '川越市': (677, 398), '熊谷市': (588, 175),
+    '川口市': (855, 480), '行田市': (651, 180), '秩父市': (240, 390), '所沢市': (634, 475),
+    '飯能市': (520, 460), '加須市': (748, 195), '本庄市': (360, 115), '東松山市': (584, 285),
+    '春日部市': (895, 355), '狭山市': (590, 425), '羽生市': (708, 145), '鴻巣市': (651, 225),
+    '深谷市': (450, 160), '上尾市': (718, 335), '草加市': (928, 471), '越谷市': (928, 410),
+    '蕨市': (815, 480), '戸田市': (807, 497), '入間市': (520, 497), '朝霞市': (750, 497),
+    '志木市': (740, 480), '和光市': (773, 522), '新座市': (724, 522), '桶川市': (714, 296),
+    '久喜市': (775, 230), '北本市': (673, 280), '八潮市': (960, 492), '富士見市': (718, 435),
+    '三郷市': (987, 475), '蓮田市': (791, 285), '坂戸市': (635, 330), '幸手市': (876, 226),
+    '鶴ヶ島市': (580, 355), '日高市': (543, 395), '吉川市': (987, 411), 'ふじみ野市': (698, 435),
+    '白岡市': (822, 295), '伊奈町': (782, 296), '三芳町': (703, 472), '毛呂山町': (511, 355),
+    '越生町': (453, 351), '滑川町': (558, 255), '嵐山町': (529, 260), '小川町': (440, 230),
+    '川島町': (677, 315), '吉見町': (630, 270), '鳩山町': (538, 315), 'ときがわ町': (490, 280),
+    '横瀬町': (335, 355), '皆野町': (360, 260), '長瀞町': (360, 170), '小鹿野町': (175, 290),
+    '東秩父村': (400, 295), '美里町': (395, 155), '神川町': (300, 150), '上里町': (363, 34),
+    '寄居町': (395, 170), '宮代町': (860, 280), '杉戸町': (876, 280), '松伏町': (960, 355)
 }
 
 # 3. データ整理・統合
@@ -138,6 +125,7 @@ for i in range(len(df_a)):
     
     min_tk = min(tk_a, tk_b, tk_c)
     best_comp = 'A社' if tk_a == min_tk else ('B社' if tk_b == min_tk else 'C社')
+    best_off = off_a if best_comp == 'A社' else (off_b if best_comp == 'B社' else off_c)
     init_mode = '委託配達' if (sub_a or sub_b or sub_c) else '自社配達'
     
     rows.append({
@@ -145,6 +133,7 @@ for i in range(len(df_a)):
         '市区町村名': city,
         '配達方式': init_mode,
         '一括担当': best_comp,
+        '一括担当 営業所': best_off,
         'A社担当': False, 'B社担当': False, 'C社担当': False,
         'A社営業所': off_a, 'A社委託': sub_a, 'A社重量_t': wt_a, 'A社距離_km': dist_a, 'A社トンキロ': tk_a,
         'B社営業所': off_b, 'B社委託': sub_b, 'B社重量_t': wt_b, 'B社距離_km': dist_b, 'B社トンキロ': tk_b,
@@ -165,18 +154,22 @@ if "最少トンキロ" in rule:
     for idx, r in base_df.iterrows():
         min_tk = min(r['A社トンキロ'], r['B社トンキロ'], r['C社トンキロ'])
         best = 'A社' if r['A社トンキロ'] == min_tk else ('B社' if r['B社トンキロ'] == min_tk else 'C社')
+        best_off = r['A社営業所'] if best == 'A社' else (r['B社営業所'] if best == 'B社' else r['C社営業所'])
         base_df.loc[idx, '一括担当'] = best
-        base_df.loc[idx, 'A社担当'] = False
-        base_df.loc[idx, 'B社担当'] = False
-        base_df.loc[idx, 'C社担当'] = False
+        base_df.loc[idx, '一括担当 営業所'] = best_off
+        base_df.loc[idx, 'A社担当'] = False; base_df.loc[idx, 'B社担当'] = False; base_df.loc[idx, 'C社担当'] = False
 elif "A社一括" in rule:
-    base_df['一括担当'] = 'A社'; base_df['A社担当'] = False; base_df['B社担当'] = False; base_df['C社担当'] = False
+    base_df['一括担当'] = 'A社'; base_df['一括担当 営業所'] = base_df['A社営業所']
+    base_df['A社担当'] = False; base_df['B社担当'] = False; base_df['C社担当'] = False
 elif "B社一括" in rule:
-    base_df['一括担当'] = 'B社'; base_df['A社担当'] = False; base_df['B社担当'] = False; base_df['C社担当'] = False
+    base_df['一括担当'] = 'B社'; base_df['一括担当 営業所'] = base_df['B社営業所']
+    base_df['A社担当'] = False; base_df['B社担当'] = False; base_df['C社担当'] = False
 elif "C社一括" in rule:
-    base_df['一括担当'] = 'C社'; base_df['A社担当'] = False; base_df['B社担当'] = False; base_df['C社担当'] = False
+    base_df['一括担当'] = 'C社'; base_df['一括担当 営業所'] = base_df['C社営業所']
+    base_df['A社担当'] = False; base_df['B社担当'] = False; base_df['C社担当'] = False
 else:
-    base_df['一括担当'] = 'なし'; base_df['A社担当'] = False; base_df['B社担当'] = False; base_df['C社担当'] = False
+    base_df['一括担当'] = 'なし'; base_df['一括担当 営業所'] = '-'
+    base_df['A社担当'] = False; base_df['B社担当'] = False; base_df['C社担当'] = False
 
 # 4. タブUI構成
 tab1, tab2, tab3 = st.tabs(["📊 全体サマリー＆現状比較", "🏢 会社別・営業所別集計", "📝 市町村別・受持選択（編集）"])
@@ -185,10 +178,11 @@ tab1, tab2, tab3 = st.tabs(["📊 全体サマリー＆現状比較", "🏢 会�
 with tab3:
     st.subheader("📝 市町村別・受持選択テーブル")
     edited_df = st.data_editor(
-        base_df[['市区町村コード', '市区町村名', '配達方式', '一括担当', 'A社担当', 'B社担当', 'C社担当', 'A社トンキロ', 'B社トンキロ', 'C社トンキロ']],
+        base_df[['市区町村コード', '市区町村名', '配達方式', '一括担当', '一括担当 営業所', 'A社担当', 'B社担当', 'C社担当', 'A社トンキロ', 'B社トンキロ', 'C社トンキロ']],
         column_config={
             "配達方式": st.column_config.SelectboxColumn("配達方式", options=["自社配達", "委託配達"], required=True),
             "一括担当": st.column_config.SelectboxColumn("市町村全体 一括担当", options=["なし", "A社", "B社", "C社"], required=True),
+            "一括担当 営業所": st.column_config.SelectboxColumn("一括担当 営業所", options=ALL_OFFICES + ["-"], required=True),
             "A社担当": st.column_config.CheckboxColumn("A社 個別", default=False),
             "B社担当": st.column_config.CheckboxColumn("B社 個別", default=False),
             "C社担当": st.column_config.CheckboxColumn("C社 個別", default=False),
@@ -209,6 +203,7 @@ for idx, r in edited_df.iterrows():
     
     has_indiv = r['A社担当'] or r['B社担当'] or r['C社担当']
     target_comp = r['一括担当']
+    target_off = r['一括担当 営業所']
     
     indiv_selected = []
     if r['A社担当']: indiv_selected.append('A社')
@@ -217,6 +212,7 @@ for idx, r in edited_df.iterrows():
     
     map_status_dict[city_name] = {
         '一括担当': target_comp,
+        '一括営業所': target_off,
         '個別選択': indiv_selected
     }
     
@@ -249,7 +245,7 @@ for idx, r in edited_df.iterrows():
         if target_comp in ['A社', 'B社', 'C社']:
             c_code = target_comp[0]
             sub = is_sub_mode or orig[c_code + '社委託']
-            off = orig[c_code + '社営業所']
+            off = target_off if target_off != '-' else orig[c_code + '社営業所']
             
             total_wt = orig['A社重量_t'] + orig['B社重量_t'] + orig['C社重量_t']
             total_tk = orig['A社トンキロ'] + orig['B社トンキロ'] + orig['C社トンキロ']
@@ -313,176 +309,31 @@ with tab1:
 
     st.markdown("---")
     st.subheader("🗺️ 埼玉県 市町村別受持選択 白地図エリアマップ")
-    st.caption("塗り分け：一括担当（🔴 A社: 赤, 🔵 B社: 青, 🟢 C社: 緑, ⚪ なし: 灰） / ドット：個別選択された会社の色")
+    st.caption("塗り分け：営業所毎の配色（🔴 A社系: 赤グラデーション, 🔵 B社系: 青グラデーション, 🟢 C社系: 緑グラデーション, ⚪ 未設定: 灰）")
 
-    map_img_path = None
-    for target_path in ["20261001_bc6e30f7720a548fb561a31_2.jpg", "20261001_bc6e30f7720a548fb561a31_2.png", "20261001_bc6e30f7720a548fb561a31.jpg", "20261001_bc6e30f7720a548fb561a31.png"]:
-        if os.path.exists(target_path):
-            map_img_path = target_path
-            break
-
-    if map_img_path and os.path.exists(map_img_path):
-        src_img = cv2.imread(map_img_path)
-        
-        # 1. 画像の基準解像度（1024x560）への正規化
-        src_img = cv2.resize(src_img, (1024, 560), interpolation=cv2.INTER_AREA)
-        h, w, _ = src_img.shape
-        
-        # 2. 境界線の抽出（二値化）
-        gray = cv2.cvtColor(src_img, cv2.COLOR_BGR2GRAY)
-        if np.mean(gray) < 100:
-            line_bin = (gray > 25).astype(np.uint8) * 255
-        else:
-            line_bin = (gray < 200).astype(np.uint8) * 255
-            
-        kernel = np.ones((3, 3), np.uint8)
-        line_bin_dilated = cv2.dilate(line_bin, kernel, iterations=1)
-        
-        # 3. ペイント用キャンバス（黒色の境界線をあらかじめセットして県外ペイント流出を完全ガード）
-        canvas_rgb = np.full((h, w, 3), 255, dtype=np.uint8)
-        canvas_rgb[line_bin_dilated == 255] = (0, 0, 0) # 黒線で県外と県内を分離遮断！
-        
-        # RGB カラーマップ定義
-        RGB_MAP = {
-            'A社': (239, 68, 68),
-            'B社': (59, 130, 246),
-            'C社': (16, 185, 129),
-            'なし': (220, 225, 230)
-        }
-
-        # 県外（マップ外側の背景領域）ペイント保護マスクの生成（黒線が存在するキャンバスで(0,0)から洪水）
-        bg_protection_mask = np.zeros((h + 2, w + 2), np.uint8)
-        cv2.floodFill(canvas_rgb.copy(), bg_protection_mask, (0, 0), (255, 255, 255), (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
-
-        # 4. 各72市区町村のメイン領域をFloodFillペイント
-        for c_name, (sx, sy) in CITY_SEEDS.items():
-            info = map_status_dict.get(c_name, {'一括担当': 'なし', '個別選択': []})
-            bulk = info['一括担当']
-            indivs = info['個別選択']
-            
-            fill_rgb = RGB_MAP.get(bulk, (220, 225, 230))
-            if bulk == 'なし' and len(indivs) > 0:
-                fill_rgb = (220, 225, 230)
-                
-            if 0 <= sx < w and 0 <= sy < h:
-                # 黒線の上に当たっている場合は、近傍の「黒線でない白地領域(line_bin_dilated == 0)」へ安全退避
-                if line_bin_dilated[sy, sx] == 255:
-                    found = False
-                    for r in range(1, 20):
-                        for dy in range(-r, r+1):
-                            for dx in range(-r, r+1):
-                                nx, ny = sx + dx, sy + dy
-                                if 0 <= nx < w and 0 <= ny < h and line_bin_dilated[ny, nx] == 0:
-                                    sx, sy = nx, ny
-                                    found = True
-                                    break
-                            if found: break
-                        if found: break
-                
-                # 白地ピクセルに確実に着地したシードから保護マスクをコピーして着色実行
-                if line_bin_dilated[sy, sx] == 0:
-                    m_curr = bg_protection_mask.copy()
-                    cv2.floodFill(canvas_rgb, m_curr, (sx, sy), fill_rgb, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
-                
-                # ドット描画（個別選択時）
-                if len(indivs) > 0:
-                    for d_idx, comp_indiv in enumerate(indivs):
-                        dot_rgb = RGB_MAP.get(comp_indiv, (0, 0, 0))
-                        dot_x = sx + (d_idx - (len(indivs)-1)/2.0) * 16
-                        cv2.circle(canvas_rgb, (int(dot_x), sy), 7, (255, 255, 255), -1)
-                        cv2.circle(canvas_rgb, (int(dot_x), sy), 6, dot_rgb, -1)
-
-        # 5. 埼玉県内の「小さな未塗り白地スペース」を精密に自動補填（area < 1200）
-        gray_temp = cv2.cvtColor(canvas_rgb, cv2.COLOR_RGB2GRAY)
-        white_holes = (gray_temp > 250).astype(np.uint8)
-        num_holes, labels_holes, stats_holes, _ = cv2.connectedComponentsWithStats(white_holes)
-        bg_hole_label = labels_holes[0, 0]
-
-        for i in range(1, num_holes):
-            area = stats_holes[i, cv2.CC_STAT_AREA]
-            cx = int(stats_holes[i, cv2.CC_STAT_LEFT] + stats_holes[i, cv2.CC_STAT_WIDTH]/2)
-            cy = int(stats_holes[i, cv2.CC_STAT_TOP] + stats_holes[i, cv2.CC_STAT_HEIGHT]/2)
-            
-            if i != bg_hole_label and area < 1200:
-                found_color = None
-                for r in range(1, 25):
-                    for dy in range(-r, r+1, 3):
-                        for dx in range(-r, r+1, 3):
-                            nx, ny = cx + dx, cy + dy
-                            if 0 <= nx < w and 0 <= ny < h:
-                                p_col = canvas_rgb[ny, nx]
-                                if np.mean(p_col) < 230 and np.mean(p_col) > 10:
-                                    found_color = tuple(int(c) for c in p_col)
-                                    break
-                        if found_color is not None: break
-                    if found_color is not None: break
-                
-                if found_color is not None:
-                    m_hole = bg_protection_mask.copy()
-                    cv2.floodFill(canvas_rgb, m_hole, (cx, cy), found_color, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
-
-        # 6. 黒色境界線を一番上にはっきりとオーバーレイ描画
-        canvas_rgb[line_bin_dilated == 255] = (0, 0, 0)
-
-        # 7. 不要な背景余白を自動クロップしてフィット表示
-        gray_check = cv2.cvtColor(canvas_rgb, cv2.COLOR_RGB2GRAY)
-        non_bg = np.where(gray_check < 250)
-        
-        if len(non_bg[0]) > 0:
-            min_y, max_y = np.min(non_bg[0]), np.max(non_bg[0])
-            min_x, max_x = np.min(non_bg[1]), np.max(non_bg[1])
-            pad = 12
-            crop_min_y = max(0, min_y - pad)
-            crop_max_y = min(h, max_y + pad)
-            crop_min_x = max(0, min_x - pad)
-            crop_max_x = min(w, max_x + pad)
-            cropped_img = canvas_rgb[crop_min_y:crop_max_y, crop_min_x:crop_max_x]
-        else:
-            cropped_img = canvas_rgb
-
-        st.image(cropped_img, use_container_width=True)
-    else:
-        st.warning("マップ画像が見つかりません。リポジトリに画像を配置してください。")
-
-# タブ2: 会社別 & 営業所別 詳細集計
-with tab2:
-    st.subheader("🏢 会社別 集計（自社配達 vs 外部委託）")
-    st.caption("※ 「（委託）」指定の地域は区分して集計しています。")
+    # 地図上の動的凡例（カラーボックス）UI表示
+    st.markdown("##### 📌 営業所別 カラー凡例（濃淡グラデーション）")
+    leg_cols = st.columns(3)
     
-    if not sim_df.empty:
-        comp_sub_summary = sim_df.groupby(['会社表示']).agg(
-            担当件数=('市区町村コード', 'count'),
-            合計配達重量_t=('重量_t', 'sum'),
-            平均配送距離_km=('距離_km', 'mean'),
-            合計トンキロ=('トンキロ', 'sum')
-        ).reset_index().rename(columns={'会社表示': '会社区分'})
-        
-        st.dataframe(
-            comp_sub_summary.style.format({
-                '合計配達重量_t': '{:,.2f}', '平均配送距離_km': '{:.2f}', '合計トンキロ': '{:,.2f}'
-            }),
-            use_container_width=True, hide_index=True
-        )
-    else:
-        st.info("データが未選択です。")
+    with leg_cols[0]:
+        st.markdown("**🔴 A社 営業所**")
+        for off in A_OFFICES:
+            c = OFFICE_COLOR_MAP.get(off, (239, 68, 68))
+            hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
+            st.markdown(f'■ {off}', unsafe_allow_html=True)
+            
+    with leg_cols[1]:
+        st.markdown("**🔵 B社 営業所**")
+        for off in B_OFFICES:
+            c = OFFICE_COLOR_MAP.get(off, (59, 130, 246))
+            hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
+            st.markdown(f'■ {off}', unsafe_allow_html=True)
+            
+    with leg_cols[2]:
+        st.markdown("**🟢 C社 営業所**")
+        for off in C_OFFICES:
+            c = OFFICE_COLOR_MAP.get(off, (16, 185, 129))
+            hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
+            st.markdown(f'■ {off}', unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.subheader("🏬 営業所別 集計（自社配達 vs 外部委託）")
-    st.caption("※ 営業所ごとに「（委託）」区分で行を分けて表示しています。")
-    
-    if not sim_df.empty:
-        off_sub_summary = sim_df.groupby(['担当会社', '営業所表示']).agg(
-            担当件数=('市区町村コード', 'count'),
-            合計配達重量_t=('重量_t', 'sum'),
-            平均配送距離_km=('距離_km', 'mean'),
-            合計トンキロ=('トンキロ', 'sum')
-        ).reset_index().rename(columns={'担当会社': '会社', '営業所表示': '営業所区分'})
-        
-        st.dataframe(
-            off_sub_summary.style.format({
-                '合計配達重量_t': '{:,.2f}', '平均配送距離_km': '{:.2f}', '合計トンキロ': '{:,.2f}'
-            }),
-            use_container_width=True, hide_index=True
-        )
-    else:
-        st.info("データが未選択です。")
+    st.markdown("
