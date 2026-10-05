@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import cv2
 import os
+import math
 
 # 1. ページ基本設定
 st.set_page_config(
@@ -36,154 +37,159 @@ except Exception as e:
     st.error("データの読み込みに失敗しました。J, T シートが含まれるExcelファイルであることを確認してください。")
     st.stop()
 
-# 各社の営業所リストとグラデーションカラーマップを社別に分離生成（同名営業所の色の混同防止）
-def generate_office_colors(df_j, df_t):
-    j_offices = sorted(list(set(df_j['J社営業所名'].dropna().astype(str).tolist())))
-    t_offices = sorted(list(set(df_t['T社営業所名'].dropna().astype(str).tolist())))
+# 3. 役所・役場座標 ＆ 営業所初期座標定義
+MUNICIPAL_HALL_COORDS = {
+    '大阪市都島区': (34.7011, 135.5303), '大阪市福島区': (34.6922, 135.4727), '大阪市此花区': (34.6853, 135.4619),
+    '大阪市西区': (34.6756, 135.4872), '大阪市港区': (34.6644, 135.4608), '大阪市大正区': (34.6528, 135.4711),
+    '大阪市天王寺区': (34.6561, 135.5208), '大阪市浪速区': (34.6558, 135.4981), '大阪市西淀川区': (34.7119, 135.4578),
+    '大阪市東淀川区': (34.7394, 135.5347), '大阪市東成区': (34.6694, 135.5472), '大阪市生野区': (34.6550, 135.5439),
+    '大阪市旭区': (34.7214, 135.5428), '大阪市城東区': (34.6989, 135.5458), '大阪市阿倍野区': (34.6386, 135.5175),
+    '大阪市住吉区': (34.6086, 135.4958), '大阪市東住吉区': (34.6228, 135.5275), '大阪市西成区': (34.6358, 135.4947),
+    '大阪市淀川区': (34.7203, 135.4831), '大阪市鶴見区': (34.7036, 135.5714), '大阪市住之江区': (34.6097, 135.4722),
+    '大阪市平野区': (34.6214, 135.5489), '大阪市北区': (34.7056, 135.5103), '大阪市中央区': (34.6822, 135.5108),
+    '堺市堺区': (34.5731, 135.4831), '堺市中区': (34.5369, 135.4967), '堺市東区': (34.5328, 135.5222),
+    '堺市西区': (34.5483, 135.4608), '堺市南区': (34.4925, 135.5019), '堺市北区': (34.5661, 135.5133),
+    '堺市美原区': (34.5269, 135.5583), '岸和田市': (34.4597, 135.3719), '豊中市': (34.7814, 135.4703),
+    '池田市': (34.8214, 135.4278), '吹田市': (34.7583, 135.5167), '泉大津市': (34.5028, 135.4056),
+    '高槻市': (34.8483, 135.6181), '貝塚市': (34.4369, 135.3583), '守口市': (34.7358, 135.5653),
+    '枚方市': (34.8161, 135.6508), '茨木市': (34.8161, 135.5683), '八尾市': (34.6269, 135.6008),
+    '泉佐野市': (34.4086, 135.3283), '富田林市': (34.5008, 135.6008), '寝屋川市': (34.7656, 135.6269),
+    '河内長野市': (34.4558, 135.5639), '松原市': (34.5778, 135.5539), '大東市': (34.7119, 135.6239),
+    '和泉市': (34.4883, 135.4267), '箕面市': (34.8269, 135.4703), '柏原市': (34.5808, 135.6289),
+    '羽曳野市': (34.5583, 135.6067), '門真市': (34.7336, 135.5886), '摂津市': (34.7792, 135.5622),
+    '高石市': (34.5208, 135.4383), '藤井寺市': (34.5739, 135.5967), '東大阪市': (34.6794, 135.6008),
+    '泉南市': (34.3639, 135.2858), '四條畷市': (34.7369, 135.6419), '交野市': (34.7878, 135.6886),
+    '大阪狭山市': (34.5036, 135.5539), '阪南市': (34.3583, 135.2389), '島本町': (34.8869, 135.6639),
+    '豊能町': (34.9383, 135.4739), '能勢町': (34.9669, 135.3989), '忠岡町': (34.4869, 135.3919),
+    '熊取町': (34.4036, 135.3539), '田尻町': (34.3983, 135.2919), '岬町': (34.3214, 135.1539),
+    '太子町': (34.5222, 135.6489), '河南町': (34.4883, 135.6358), '千早赤阪村': (34.4569, 135.6189)
+}
+
+EXISTING_OFFICES_INFO = {
+    ('J社', '大阪'): {'address': '大阪府茨木市宿久庄2-10-2', 'coords': (34.8583, 135.5383)},
+    ('J社', '尼崎'): {'address': '兵庫県尼崎市西高洲町16-19', 'coords': (34.7083, 135.4083)},
+    ('J社', '大阪南港'): {'address': '大阪府大阪市住之江区南港南1-1-125', 'coords': (34.6183, 135.4083)},
+    ('J社', '東大阪'): {'address': '大阪府八尾市西高安町4-57-1', 'coords': (34.6308, 135.6383)},
+    ('J社', '松原'): {'address': '大阪府松原市三宅西6-891-1', 'coords': (34.5883, 135.5383)},
+    ('J社', '貝塚'): {'address': '大阪府貝塚市港17-8', 'coords': (34.4483, 135.3483)},
+    ('J社', '京都'): {'address': '京都府久世郡久御山町下津屋上ノ浜28-2', 'coords': (34.8883, 135.7383)},
+    ('T社', '大阪中央'): {'address': '大阪府大阪市鶴見区焼野3-2-11', 'coords': (34.7139, 135.5839)},
+    ('T社', '尼崎'): {'address': '兵庫県尼崎市東海岸町21-10', 'coords': (34.6983, 135.4183)},
+    ('T社', '南大阪'): {'address': '大阪府堺市堺区築港八幡町1-1', 'coords': (34.6083, 135.4383)},
+    ('T社', '北大阪'): {'address': '大阪府茨木市宮島2-5-1', 'coords': (34.8039, 135.5839)},
+    ('T社', '東大阪'): {'address': '大阪府東大阪市本庄中1-4-90', 'coords': (34.6883, 135.6083)},
+    ('T社', '泉佐野'): {'address': '大阪府泉佐野市下瓦屋町2-2-50', 'coords': (34.4239, 135.3339)},
+    ('T社', '京都'): {'address': '京都府京都市伏見区横大路一本木22', 'coords': (34.9283, 135.7483)},
+}
+
+def calc_haversine_distance(lat1, lon1, lat2, lon2):
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return round(R * c * 1.2, 1)
+
+# セッション状態での新規営業所管理
+if "custom_offices" not in st.session_state:
+    st.session_state.custom_offices = []
+
+# カラーマップ生成
+def generate_office_colors(df_j, df_t, custom_offices):
+    j_offices = sorted(list(set(df_j['J社営業所名'].dropna().astype(str).tolist() + [o['name'] for o in custom_offices if o['company'] == 'J社'])))
+    t_offices = sorted(list(set(df_t['T社営業所名'].dropna().astype(str).tolist() + [o['name'] for o in custom_offices if o['company'] == 'T社'])))
     
-    j_office_color_map = {}
-    t_office_color_map = {}
+    j_color_map = {}
+    t_color_map = {}
     
     n_j = len(j_offices)
     for idx, off in enumerate(j_offices):
         f = 0.45 + 0.55 * (idx / max(n_j - 1, 1)) if n_j > 1 else 0.85
-        r = int(255 * f)
-        g = int(20 * (1.0 - f))
-        b = int(20 * (1.0 - f))
-        j_office_color_map[off] = (r, g, b)
+        j_color_map[off] = (int(255 * f), int(20 * (1.0 - f)), int(20 * (1.0 - f)))
         
     n_t = len(t_offices)
     for idx, off in enumerate(t_offices):
         f = 0.45 + 0.55 * (idx / max(n_t - 1, 1)) if n_t > 1 else 0.85
-        r = int(30 * (1.0 - f))
-        g = int(140 * f)
-        b = int(255 * f)
-        t_office_color_map[off] = (r, g, b)
+        t_color_map[off] = (int(30 * (1.0 - f)), int(140 * f), int(255 * f))
         
-    return j_office_color_map, t_office_color_map, j_offices, t_offices
+    return j_color_map, t_color_map, j_offices, t_offices
 
-J_OFFICE_COLOR_MAP, T_OFFICE_COLOR_MAP, J_OFFICES, T_OFFICES = generate_office_colors(df_j, df_t)
+J_OFFICE_COLOR_MAP, T_OFFICE_COLOR_MAP, J_OFFICES, T_OFFICES = generate_office_colors(df_j, df_t, st.session_state.custom_offices)
 ALL_OFFICES = sorted(list(set(J_OFFICES + T_OFFICES)))
 
-# 『座標_5.xlsx』E列（改正③）準拠の基本座標 (1024x1400解像度基準)
+# 白地図座標
 CITY_SEEDS = {
-    '能勢町': (542, 143),
-    '豊能町': (635, 232),
-    '島本町': (897, 293),
-    '高槻市': (816, 331),
-    '枚方市': (923, 331),
-    '池田市': (553, 351),
-    '箕面市': (618, 359),
-    '茨木市': (702, 292),
-    '交野市': (932, 517),
-    '豊中市': (592, 473),
-    '吹田市': (702, 497),
-    '摂津市': (750, 517),
-    '寝屋川市': (832, 504),
-    '守口市': (750, 583),
-    '門真市': (818, 584),
-    '四條畷市': (923, 584),
-    '大東市': (818, 600),
-    '東大阪市': (867, 672),
-    '大阪市西淀川区': (566, 619),
-    '大阪市東淀川区': (670, 550),
-    '大阪市淀川区': (603, 593),
-    '大阪市北区': (637, 625),
-    '大阪市都島区': (680, 594),
-    '大阪市旭区': (715, 588),
-    '大阪市城東区': (714, 638),
-    '大阪市鶴見区': (761, 619),
-    '大阪市福島区': (594, 647),
-    '大阪市此花区': (545, 673),
-    '大阪市西区': (617, 673),
-    '大阪市中央区': (653, 671),
-    '大阪市東成区': (719, 676),
-    '大阪市生野区': (708, 712),
-    '大阪市港区': (555, 713),
-    '大阪市浪速区': (628, 702),
-    '大阪市天王寺区': (665, 707),
-    '大阪市大正区': (582, 740),
-    '大阪市西成区': (620, 736),
-    '大阪市阿倍野区': (660, 741),
-    '大阪市平野区': (724, 795),
-    '大阪市住之江区': (533, 748),
-    '大阪市住吉区': (660, 799),
-    '大阪市東住吉区': (680, 799),
-    '八尾市': (818, 769),
-    '柏原市': (881, 837),
-    '松原市': (723, 842),
-    '藤井寺市': (817, 853),
-    '羽曳野市': (811, 911),
-    '太子町': (890, 962),
-    '富田林市': (811, 1011),
-    '大阪狭山市': (724, 1011),
-    '河南町': (866, 1011),
-    '千早赤阪村': (881, 1104),
-    '河内長野市': (743, 1147),
-    '堺市堺区': (607, 848),
-    '堺市北区': (665, 850),
-    '堺市西区': (565, 930),
-    '堺市中区': (640, 930),
-    '堺市東区': (682, 911),
-    '堺市美原区': (754, 932),
-    '堺市南区': (641, 1011),
-    '高石市': (535, 930),
-    '泉大津市': (504, 1000),
-    '忠岡町': (504, 1011),
-    '和泉市': (565, 1096),
-    '岸和田市': (504, 1179),
-    '貝塚市': (494, 1220),
-    '熊取町': (426, 1179),
-    '泉佐野市': (370, 1179),
-    '田尻町': (308, 1187),
-    '泉南市': (318, 1251),
-    '阪南市': (239, 1280),
-    '岬町': (118, 1336)
+    '能勢町': (542, 143), '豊能町': (635, 232), '島本町': (897, 293), '高槻市': (816, 331), '枚方市': (923, 331),
+    '池田市': (553, 351), '箕面市': (618, 359), '茨木市': (702, 292), '交野市': (932, 517), '豊中市': (592, 473),
+    '吹田市': (702, 497), '摂津市': (750, 517), '寝屋川市': (832, 504), '守口市': (750, 583), '門真市': (818, 584),
+    '四條畷市': (923, 584), '大東市': (818, 600), '東大阪市': (867, 672), '大阪市西淀川区': (566, 619),
+    '大阪市東淀川区': (670, 550), '大阪市淀川区': (603, 593), '大阪市北区': (637, 625), '大阪市都島区': (680, 594),
+    '大阪市旭区': (715, 588), '大阪市城東区': (714, 638), '大阪市鶴見区': (761, 619), '大阪市福島区': (594, 647),
+    '大阪市此花区': (545, 673), '大阪市西区': (617, 673), '大阪市中央区': (653, 671), '大阪市東成区': (719, 676),
+    '大阪市生野区': (708, 712), '大阪市港区': (555, 713), '大阪市浪速区': (628, 702), '大阪市天王寺区': (665, 707),
+    '大阪市大正区': (582, 740), '大阪市西成区': (620, 736), '大阪市阿倍野区': (660, 741), '大阪市平野区': (724, 795),
+    '大阪市住之江区': (533, 748), '大阪市住吉区': (660, 799), '大阪市東住吉区': (680, 799), '八尾市': (818, 769),
+    '柏原市': (881, 837), '松原市': (723, 842), '藤井寺市': (817, 853), '羽曳野市': (811, 911), '太子町': (890, 962),
+    '富田林市': (811, 1011), '大阪狭山市': (724, 1011), '河南町': (866, 1011), '千早赤阪村': (881, 1104),
+    '河内長野市': (743, 1147), '堺市堺区': (607, 848), '堺市北区': (665, 850), '堺市西区': (565, 930),
+    '堺市中区': (640, 930), '堺市東区': (682, 911), '堺市美原区': (754, 932), '堺市南区': (641, 1011),
+    '高石市': (535, 930), '泉大津市': (504, 1000), '忠岡町': (504, 1011), '和泉市': (565, 1096),
+    '岸和田市': (504, 1179), '貝塚市': (494, 1220), '熊取町': (426, 1179), '泉佐野市': (370, 1179),
+    '田尻町': (308, 1187), '泉南市': (318, 1251), '阪南市': (239, 1280), '岬町': (118, 1336)
 }
 
-# 連動して着色する離れ島（夢洲・舞洲／関西国際空港島など）の追加座標
 EXTRA_SEEDS = {
-    '大阪市此花区': [(477, 710), (503, 713)], # 夢洲・舞洲エリア
-    '泉佐野市': [(236, 1101)]                 # 関西国際空港島エリア
+    '大阪市此花区': [(477, 710), (503, 713)],
+    '泉佐野市': [(236, 1101)]
 }
 
-# 3. データ整理・統合
+# 4. ベースデータ作成（距離・重量・トンキロ算出手順を含む）
+all_office_info = dict(EXISTING_OFFICES_INFO)
+for cust in st.session_state.custom_offices:
+    all_office_info[(cust['company'], cust['name'])] = {'address': cust['address'], 'coords': cust['coords']}
+
 rows = []
 for i in range(len(df_j)):
     code = df_j.loc[i, '市区町村コード']
     city = df_j.loc[i, '市区町村名\n（漢字）']
     
-    wt_j = df_j.loc[i, '配達重量\n(日当たり)'] / 1000.0
-    wt_t = df_t.loc[i, '配達重量\n(日当たり)'] / 1000.0
+    wt_j_kg = df_j.loc[i, '配達重量\n(日当たり)']
+    wt_t_kg = df_t.loc[i, '配達重量\n(日当たり)']
     
-    off_j, off_t = df_j.loc[i, 'J社営業所名'], df_t.loc[i, 'T社営業所名']
+    off_j_def, off_t_def = df_j.loc[i, 'J社営業所名'], df_t.loc[i, 'T社営業所名']
     sub_j = str(df_j.loc[i, 'J社外部委託地域']).strip() == '◯'
     sub_t = str(df_t.loc[i, 'T社外部委託地域']).strip() == '◯'
     
-    dist_j = round(5.0 + (i * 3 % 17) + (i % 5) * 1.2, 1)
-    dist_t = round(4.5 + (i * 5 % 19) + (i % 4) * 1.5, 1)
+    c_lat, c_lon = MUNICIPAL_HALL_COORDS.get(city, (34.6853, 135.5208))
+    j_coords = all_office_info.get(('J社', off_j_def), {}).get('coords', (34.6853, 135.5208))
+    t_coords = all_office_info.get(('T社', off_t_def), {}).get('coords', (34.6853, 135.5208))
     
-    tk_j = round(wt_j * dist_j, 2)
-    tk_t = round(wt_t * dist_t, 2)
+    dist_j = calc_haversine_distance(j_coords[0], j_coords[1], c_lat, c_lon)
+    dist_t = calc_haversine_distance(t_coords[0], t_coords[1], c_lat, c_lon)
+    
+    tk_j = round(dist_j * (wt_j_kg / 1000.0), 2)
+    tk_t = round(dist_t * (wt_t_kg / 1000.0), 2)
     
     best_comp = 'J社' if tk_j <= tk_t else 'T社'
-    best_off = off_j if best_comp == 'J社' else off_t
+    best_off = off_j_def if best_comp == 'J社' else off_t_def
     init_mode = '委託配達' if (sub_j or sub_t) else '自社配達'
     
     rows.append({
-        '市区町村コード': code,
-        '市区町村名': city,
+        '市町村コード': code,
+        '市町村名': city,
         '配達方式': init_mode,
-        '一括担当': best_comp,
-        '一括担当 営業所': best_off,
-        'J社担当': False, 'T社担当': False,
-        'J社営業所': off_j, 'J社委託': sub_j, 'J社重量_t': wt_j, 'J社距離_km': dist_j, 'J社トンキロ': tk_j,
-        'T社営業所': off_t, 'T社委託': sub_t, 'T社重量_t': wt_t, 'T社距離_km': dist_t, 'T社トンキロ': tk_t,
+        '市町村一括担当': best_comp,
+        '市町村一括担当営業所': best_off,
+        'J社個別': False, 'T社個別': False,
+        'J社 距離(km)': dist_j, 'J社 配達重量(kg)': wt_j_kg, 'J社 トンキロ(t・km)': tk_j,
+        'T社 距離(km)': dist_t, 'T社 配達重量(kg)': wt_t_kg, 'T社 トンキロ(t・km)': tk_t,
+        '_j_def_off': off_j_def, '_t_def_off': off_t_def,
+        '_sub_j': sub_j, '_sub_t': sub_t
     })
 
 base_df = pd.DataFrame(rows)
 
-# サイドバー設定
+# サイドバールール
 st.sidebar.markdown("---")
 st.sidebar.header("🎯 自動一括割り当て")
 rule = st.sidebar.radio(
@@ -193,102 +199,172 @@ rule = st.sidebar.radio(
 
 if "最少トンキロ" in rule:
     for idx, r in base_df.iterrows():
-        best = 'J社' if r['J社トンキロ'] <= r['T社トンキロ'] else 'T社'
-        best_off = r['J社営業所'] if best == 'J社' else r['T社営業所']
-        base_df.loc[idx, '一括担当'] = best
-        base_df.loc[idx, '一括担当 営業所'] = best_off
-        base_df.loc[idx, 'J社担当'] = False; base_df.loc[idx, 'T社担当'] = False
+        best = 'J社' if r['J社 トンキロ(t・km)'] <= r['T社 トンキロ(t・km)'] else 'T社'
+        best_off = r['_j_def_off'] if best == 'J社' else r['_t_def_off']
+        base_df.loc[idx, '市町村一括担当'] = best
+        base_df.loc[idx, '市町村一括担当営業所'] = best_off
+        base_df.loc[idx, 'J社個別'] = False; base_df.loc[idx, 'T社個別'] = False
 elif "J社一括" in rule:
-    base_df['一括担当'] = 'J社'; base_df['一括担当 営業所'] = base_df['J社営業所']
-    base_df['J社担当'] = False; base_df['T社担当'] = False
+    base_df['市町村一括担当'] = 'J社'; base_df['市町村一括担当営業所'] = base_df['_j_def_off']
+    base_df['J社個別'] = False; base_df['T社個別'] = False
 elif "T社一括" in rule:
-    base_df['一括担当'] = 'T社'; base_df['一括担当 営業所'] = base_df['T社営業所']
-    base_df['J社担当'] = False; base_df['T社担当'] = False
+    base_df['市町村一括担当'] = 'T社'; base_df['市町村一括担当営業所'] = base_df['_t_def_off']
+    base_df['J社個別'] = False; base_df['T社個別'] = False
 else:
-    base_df['一括担当'] = 'なし'; base_df['一括担当 営業所'] = '-'
-    base_df['J社担当'] = False; base_df['T社担当'] = False
+    base_df['市町村一括担当'] = 'なし'; base_df['市町村一括担当営業所'] = '-'
+    base_df['J社個別'] = False; base_df['T社個別'] = False
 
-# 4. タブUI構成
+# 5. タブUI構成
 tab1, tab2, tab3 = st.tabs(["📊 全体サマリー＆現状比較", "🏢 会社別・営業所別集計", "📝 市町村別・受持選択（編集）"])
 
 active_records = []
 map_status_dict = {}
 
-# タブ3: 個別編集画面 ＆ マップ（下部配置）
+# タブ3: 個別編集画面
 with tab3:
+    st.subheader("➕ ③ 新規営業所の登録（J社 / T社）")
+    st.caption("新規営業所名と住所を入力して追加すると、下のテーブルおよびシミュレーション選択肢に即座に反映されます。")
+    
+    col_add_j, col_add_t = st.columns(2)
+    with col_add_j:
+        st.markdown("##### 🔴 J社 新規営業所")
+        j_new_name = st.text_input("J社 営業所名", key="j_off_name_input", placeholder="例: 茨木西")
+        j_new_addr = st.text_input("J社 所在地住所", key="j_off_addr_input", placeholder="例: 大阪府茨木市駅前1-1-1")
+        if st.button("J社 営業所を追加", key="btn_add_j"):
+            if j_new_name and j_new_addr:
+                # 簡易位置設定（市役所中心位置を基準）
+                st.session_state.custom_offices.append({
+                    'company': 'J社',
+                    'name': j_new_name,
+                    'address': j_new_addr,
+                    'coords': (34.8161, 135.5683)
+                })
+                st.success("J社新規営業所「" + j_new_name + "」を追加しました！")
+                st.rerun()
+
+    with col_add_t:
+        st.markdown("##### 🔵 T社 新規営業所")
+        t_new_name = st.text_input("T社 営業所名", key="t_off_name_input", placeholder="例: 堺中央")
+        t_new_addr = st.text_input("T社 所在地住所", key="t_off_addr_input", placeholder="例: 大阪府堺市堺区南瓦町3-1")
+        if st.button("T社 営業所を追加", key="btn_add_t"):
+            if t_new_name and t_new_addr:
+                st.session_state.custom_offices.append({
+                    'company': 'T社',
+                    'name': t_new_name,
+                    'address': t_new_addr,
+                    'coords': (34.5731, 135.4831)
+                })
+                st.success("T社新規営業所「" + t_new_name + "」を追加しました！")
+                st.rerun()
+
+    st.markdown("---")
     st.subheader("📝 市町村別・受持選択テーブル")
+    st.caption("※ 添付出力イメージ構成：市町村別の営業所距離（km）、配達重量（kg）、トンキロ（t・km）を動的計算します。")
+    
+    display_cols = [
+        '市町村コード', '市町村名', '配達方式', '市町村一括担当', '市町村一括担当営業所',
+        'J社個別', 'T社個別',
+        'J社 距離(km)', 'J社 配達重量(kg)', 'J社 トンキロ(t・km)',
+        'T社 距離(km)', 'T社 配達重量(kg)', 'T社 トンキロ(t・km)'
+    ]
+    
     edited_df = st.data_editor(
-        base_df[['市区町村コード', '市区町村名', '配達方式', '一括担当', '一括担当 営業所', 'J社担当', 'T社担当', 'J社トンキロ', 'T社トンキロ']],
+        base_df[display_cols],
         column_config={
             "配達方式": st.column_config.SelectboxColumn("配達方式", options=["自社配達", "委託配達"], required=True),
-            "一括担当": st.column_config.SelectboxColumn("市町村全体 一括担当", options=["なし", "J社", "T社"], required=True),
-            "一括担当 営業所": st.column_config.SelectboxColumn("一括担当 営業所", options=ALL_OFFICES + ["-"], required=True),
-            "J社担当": st.column_config.CheckboxColumn("J社 個別", default=False),
-            "T社担当": st.column_config.CheckboxColumn("T社 個別", default=False),
+            "市町村一括担当": st.column_config.SelectboxColumn("市町村一括担当", options=["なし", "J社", "T社"], required=True),
+            "市町村一括担当営業所": st.column_config.SelectboxColumn("市町村一括担当営業所", options=ALL_OFFICES + ["-"], required=True),
+            "J社個別": st.column_config.CheckboxColumn("J社個別", default=False),
+            "T社個別": st.column_config.CheckboxColumn("T社個別", default=False),
+            "J社 距離(km)": st.column_config.NumberColumn("J社 距離 (km)", format="%.1f"),
+            "J社 配達重量(kg)": st.column_config.NumberColumn("J社 配達重量 (kg)", format="%d"),
+            "J社 トンキロ(t・km)": st.column_config.NumberColumn("J社 トンキロ (t・km)", format="%.2f"),
+            "T社 距離(km)": st.column_config.NumberColumn("T社 距離 (km)", format="%.1f"),
+            "T社 配達重量(kg)": st.column_config.NumberColumn("T社 配達重量 (kg)", format="%d"),
+            "T社 トンキロ(t・km)": st.column_config.NumberColumn("T社 トンキロ (t・km)", format="%.2f"),
         },
-        disabled=['市区町村コード', '市区町村名', 'J社トンキロ', 'T社トンキロ'],
+        disabled=['市町村コード', '市町村名', 'J社 距離(km)', 'J社 配達重量(kg)', 'J社 トンキロ(t・km)', 'T社 距離(km)', 'T社 配達重量(kg)', 'T社 トンキロ(t・km)'],
         use_container_width=True,
         hide_index=True
     )
 
-    # 編集データの処理
+    # リアルタイム再計算処理
     for idx, r in edited_df.iterrows():
         orig = base_df.loc[idx]
-        city_name = orig['市区町村名']
+        city_name = orig['市町村名']
+        city_code = orig['市町村コード']
         is_sub_mode = (r['配達方式'] == '委託配達')
         
-        has_indiv = r['J社担当'] or r['T社担当']
-        target_comp = r['一括担当']
-        target_off = r['一括担当 営業所']
+        bulk_comp = r['市町村一括担当']
+        bulk_off = r['市町村一括担当営業所']
+        j_indiv = r['J社個別']
+        t_indiv = r['T社個別']
         
-        if target_comp == 'J社' and target_off not in J_OFFICES:
-            target_off = orig['J社営業所']
-        elif target_comp == 'T社' and target_off not in T_OFFICES:
-            target_off = orig['T社営業所']
-        elif target_comp == 'なし':
-            target_off = '-'
+        j_off_name = orig['_j_def_off']
+        t_off_name = orig['_t_def_off']
+        
+        if bulk_comp == 'J社' and bulk_off != '-':
+            j_off_name = bulk_off
+        elif bulk_comp == 'T社' and bulk_off != '-':
+            t_off_name = bulk_off
             
+        c_lat, c_lon = MUNICIPAL_HALL_COORDS.get(city_name, (34.6853, 135.5208))
+        j_coords = all_office_info.get(('J社', j_off_name), {}).get('coords', (34.6853, 135.5208))
+        t_coords = all_office_info.get(('T社', t_off_name), {}).get('coords', (34.6853, 135.5208))
+        
+        dist_j = calc_haversine_distance(j_coords[0], j_coords[1], c_lat, c_lon)
+        dist_t = calc_haversine_distance(t_coords[0], t_coords[1], c_lat, c_lon)
+        
+        wt_j_kg = orig['J社 配達重量(kg)']
+        wt_t_kg = orig['T社 配達重量(kg)']
+        wt_j_t = wt_j_kg / 1000.0
+        wt_t_t = wt_t_kg / 1000.0
+        
+        tk_j = round(dist_j * wt_j_t, 2)
+        tk_t = round(dist_t * wt_t_t, 2)
+        
         indiv_selected = []
-        if r['J社担当']: indiv_selected.append('J社')
-        if r['T社担当']: indiv_selected.append('T社')
+        if j_indiv: indiv_selected.append('J社')
+        if t_indiv: indiv_selected.append('T社')
         
         map_status_dict[city_name] = {
-            '一括担当': target_comp,
-            '一括営業所': target_off,
+            '一括担当': bulk_comp,
+            '一括営業所': bulk_off if bulk_off != '-' else (j_off_name if bulk_comp == 'J社' else t_off_name),
             '個別選択': indiv_selected
         }
         
+        has_indiv = j_indiv or t_indiv
         if has_indiv:
-            if r['J社担当']:
-                sub = is_sub_mode or orig['J社委託']
+            if j_indiv:
+                sub = is_sub_mode or orig['_sub_j']
                 active_records.append({
-                    '市区町村コード': orig['市区町村コード'], '市区町村名': city_name,
+                    '市区町村コード': city_code, '市区町村名': city_name,
                     '担当会社': 'J社', '会社表示': 'J社（委託）' if sub else 'J社',
-                    '担当営業所': orig['J社営業所'], '営業所表示': orig['J社営業所'] + ('（委託）' if sub else ''),
-                    '重量_t': orig['J社重量_t'], '距離_km': orig['J社距離_km'], 'トンキロ': orig['J社トンキロ'],
+                    '担当営業所': j_off_name, '営業所表示': j_off_name + ('（委託）' if sub else ''),
+                    '重量_t': wt_j_t, '距離_km': dist_j, 'トンキロ': tk_j,
                 })
-            if r['T社担当']:
-                sub = is_sub_mode or orig['T社委託']
+            if t_indiv:
+                sub = is_sub_mode or orig['_sub_t']
                 active_records.append({
-                    '市区町村コード': orig['市区町村コード'], '市区町村名': city_name,
+                    '市区町村コード': city_code, '市区町村名': city_name,
                     '担当会社': 'T社', '会社表示': 'T社（委託）' if sub else 'T社',
-                    '担当営業所': orig['T社営業所'], '営業所表示': orig['T社営業所'] + ('（委託）' if sub else ''),
-                    '重量_t': orig['T社重量_t'], '距離_km': orig['T社距離_km'], 'トンキロ': orig['T社トンキロ'],
+                    '担当営業所': t_off_name, '営業所表示': t_off_name + ('（委託）' if sub else ''),
+                    '重量_t': wt_t_t, '距離_km': dist_t, 'トンキロ': tk_t,
                 })
         else:
-            if target_comp in ['J社', 'T社']:
-                c_code = target_comp[0]
-                sub = is_sub_mode or orig[c_code + '社委託']
-                off = target_off if target_off != '-' else orig[c_code + '社営業所']
+            if bulk_comp in ['J社', 'T社']:
+                assigned_off = bulk_off if bulk_off != '-' else (j_off_name if bulk_comp == 'J社' else t_off_name)
+                c_code = bulk_comp[0]
+                sub = is_sub_mode or (orig['_sub_j'] if c_code == 'J' else orig['_sub_t'])
                 
-                total_wt = orig['J社重量_t'] + orig['T社重量_t']
-                total_tk = orig['J社トンキロ'] + orig['T社トンキロ']
-                avg_dist = orig[c_code + '社距離_km']
+                total_wt = wt_j_t + wt_t_t
+                avg_dist = dist_j if c_code == 'J' else dist_t
+                total_tk = round(avg_dist * total_wt, 2)
                 
                 active_records.append({
-                    '市区町村コード': orig['市区町村コード'], '市区町村名': city_name,
-                    '担当会社': target_comp, '会社表示': target_comp + ('（委託）' if sub else ''),
-                    '担当営業所': off, '営業所表示': off + ('（委託）' if sub else ''),
+                    '市区町村コード': city_code, '市区町村名': city_name,
+                    '担当会社': bulk_comp, '会社表示': bulk_comp + ('（委託）' if sub else ''),
+                    '担当営業所': assigned_off, '営業所表示': assigned_off + ('（委託）' if sub else ''),
                     '重量_t': total_wt, '距離_km': avg_dist, 'トンキロ': total_tk,
                 })
 
@@ -296,7 +372,6 @@ with tab3:
     st.subheader("🗺️ 大阪府 市区町村別受持選択 白地図エリアマップ")
     st.caption("塗り分け：営業所毎の配色（🔴 J社系: 赤グラデーション, 🔵 T社系: 青グラデーション, ⚪ 未設定: 灰）")
 
-    # 凡例表示
     leg_cols = st.columns(2)
     with leg_cols[0]:
         st.write("**🔴 J社 営業所**")
@@ -314,7 +389,7 @@ with tab3:
 
     st.write("")
 
-    # 画像読み込み
+    # 画像描画
     map_img_path = None
     for target_path in ["画像4_2.png", "画像4_2.jpg", "画像4.png", "画像3.jpg"]:
         if os.path.exists(target_path):
@@ -344,7 +419,6 @@ with tab3:
             bulk_off = info['一括営業所']
             indivs = info['個別選択']
             
-            # 社別にカラーマップを参照（同名営業所の色混同を完全防止）
             if bulk == 'J社' and bulk_off in J_OFFICE_COLOR_MAP:
                 fill_rgb = J_OFFICE_COLOR_MAP[bulk_off]
             elif bulk == 'T社' and bulk_off in T_OFFICE_COLOR_MAP:
@@ -356,14 +430,12 @@ with tab3:
             if bulk == 'なし' and len(indivs) > 0:
                 fill_rgb = (220, 225, 230)
 
-            # 塗りつぶし対象の全座標（本土＋離島追加分）
             target_coords = [(sx, sy)]
             if c_name in EXTRA_SEEDS:
                 target_coords.extend(EXTRA_SEEDS[c_name])
                 
             for cs_x, cs_y in target_coords:
                 if 0 <= cs_x < w and 0 <= cs_y < h:
-                    # 黒枠線の上の場合は周囲の空白ピクセルを自動探索
                     if line_bin_dilated[cs_y, cs_x] == 255:
                         found = False
                         for r in range(1, 15):
@@ -406,7 +478,6 @@ with tab3:
         else:
             cropped_img = canvas_rgb
 
-        # 地図表示
         map_col1, map_col2, map_col3 = st.columns([1, 4, 1])
         with map_col2:
             st.image(cropped_img, width=600)
@@ -420,8 +491,8 @@ with tab1:
     st.subheader("📈 会社毎の現状 vs 改正後（シミュレーション）サマリー")
     
     cur_comp = pd.DataFrame([
-        {'会社': 'J社', '現状_自治体数': len(base_df), '現状_重量_t': base_df['J社重量_t'].sum(), '現状_トンキロ': base_df['J社トンキロ'].sum()},
-        {'会社': 'T社', '現状_自治体数': len(base_df), '現状_重量_t': base_df['T社重量_t'].sum(), '現状_トンキロ': base_df['T社トンキロ'].sum()},
+        {'会社': 'J社', '現状_自治体数': len(base_df), '現状_重量_t': base_df['J社 配達重量(kg)'].sum() / 1000.0, '現状_トンキロ': base_df['J社 トンキロ(t・km)'].sum()},
+        {'会社': 'T社', '現状_自治体数': len(base_df), '現状_重量_t': base_df['T社 配達重量(kg)'].sum() / 1000.0, '現状_トンキロ': base_df['T社 トンキロ(t・km)'].sum()},
     ])
     
     if not sim_df.empty:
