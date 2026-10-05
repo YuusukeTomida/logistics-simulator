@@ -64,7 +64,7 @@ def generate_office_colors(df_j, df_t):
 OFFICE_COLOR_MAP, J_OFFICES, T_OFFICES = generate_office_colors(df_j, df_t)
 ALL_OFFICES = sorted(list(set(J_OFFICES + T_OFFICES)))
 
-# 『座標_3.xlsx』E列（改正③）準拠の最新座標 (1024x1400解像度基準)
+# 『座標_5.xlsx』E列（改正③）準拠の最新座標 (1024x1400解像度基準)
 CITY_SEEDS = {
     '能勢町': (542, 143),
     '豊能町': (635, 232),
@@ -77,7 +77,7 @@ CITY_SEEDS = {
     '交野市': (932, 517),
     '豊中市': (592, 473),
     '吹田市': (702, 497),
-    '摂津市': (702, 550),
+    '摂津市': (750, 517),
     '寝屋川市': (832, 504),
     '守口市': (750, 583),
     '門真市': (818, 584),
