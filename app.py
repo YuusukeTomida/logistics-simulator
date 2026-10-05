@@ -4,6 +4,7 @@ import numpy as np
 import cv2
 import os
 import math
+import io
 
 # 1. ページ基本設定
 st.set_page_config(
@@ -143,49 +144,79 @@ EXTRA_SEEDS = {
     '泉佐野市': [(236, 1101)]
 }
 
-# 4. ベースデータ作成
+# 営業所位置情報の保持
 all_office_info = dict(EXISTING_OFFICES_INFO)
 for cust in st.session_state.custom_offices:
     all_office_info[(cust['company'], cust['name'])] = {'address': cust['address'], 'coords': cust['coords']}
 
+# 4. 距離・トンキロ動的算出関数（①〜④反映）
+def compute_distance_and_tonkm(city_name, bulk_off, j_indiv_off, t_indiv_off, wt_j_kg, wt_t_kg, office_info, municipal_coords):
+    c_lat, c_lon = municipal_coords.get(city_name, (34.6853, 135.5208))
+    
+    # 優先順位：①一括担当営業所 ＞ ②J社個別 ＞ ③未指定は 0.0km
+    target_j_off = None
+    if bulk_off != '-' and bulk_off is not None:
+        target_j_off = bulk_off
+    elif j_indiv_off != '-' and j_indiv_off is not None:
+        target_j_off = j_indiv_off
+        
+    if target_j_off:
+        j_coords = office_info.get(('J社', target_j_off), {}).get('coords')
+        if not j_coords:
+            j_coords = office_info.get(('T社', target_j_off), {}).get('coords')
+        if j_coords:
+            dist_j = calc_haversine_distance(j_coords[0], j_coords[1], c_lat, c_lon)
+        else:
+            dist_j = 0.0
+    else:
+        dist_j = 0.0
+        
+    # 優先順位：①一括担当営業所 ＞ ②T社個別 ＞ ③未指定は 0.0km
+    target_t_off = None
+    if bulk_off != '-' and bulk_off is not None:
+        target_t_off = bulk_off
+    elif t_indiv_off != '-' and t_indiv_off is not None:
+        target_t_off = t_indiv_off
+        
+    if target_t_off:
+        t_coords = office_info.get(('T社', target_t_off), {}).get('coords')
+        if not t_coords:
+            t_coords = office_info.get(('J社', target_t_off), {}).get('coords')
+        if t_coords:
+            dist_t = calc_haversine_distance(t_coords[0], t_coords[1], c_lat, c_lon)
+        else:
+            dist_t = 0.0
+    else:
+        dist_t = 0.0
+        
+    tk_j = round(dist_j * (wt_j_kg / 1000.0), 2)
+    tk_t = round(dist_t * (wt_t_kg / 1000.0), 2)
+    
+    return dist_j, tk_j, dist_t, tk_t
+
+# ベースデータ生成
 rows = []
 for i in range(len(df_j)):
     code = df_j.loc[i, '市区町村コード']
     city = df_j.loc[i, '市区町村名\n（漢字）']
-    
     wt_j_kg = df_j.loc[i, '配達重量\n(日当たり)']
     wt_t_kg = df_t.loc[i, '配達重量\n(日当たり)']
-    
     off_j_def, off_t_def = df_j.loc[i, 'J社営業所名'], df_t.loc[i, 'T社営業所名']
     sub_j = str(df_j.loc[i, 'J社外部委託地域']).strip() == '◯'
     sub_t = str(df_t.loc[i, 'T社外部委託地域']).strip() == '◯'
     
-    c_lat, c_lon = MUNICIPAL_HALL_COORDS.get(city, (34.6853, 135.5208))
-    j_coords = all_office_info.get(('J社', off_j_def), {}).get('coords', (34.6853, 135.5208))
-    t_coords = all_office_info.get(('T社', off_t_def), {}).get('coords', (34.6853, 135.5208))
-    
-    dist_j = calc_haversine_distance(j_coords[0], j_coords[1], c_lat, c_lon)
-    dist_t = calc_haversine_distance(t_coords[0], t_coords[1], c_lat, c_lon)
-    
-    tk_j = round(dist_j * (wt_j_kg / 1000.0), 2)
-    tk_t = round(dist_t * (wt_t_kg / 1000.0), 2)
-    
+    dist_j, tk_j, dist_t, tk_t = compute_distance_and_tonkm(city, off_j_def, '-', '-', wt_j_kg, wt_t_kg, all_office_info, MUNICIPAL_HALL_COORDS)
     best_comp = 'J社' if tk_j <= tk_t else 'T社'
     best_off = off_j_def if best_comp == 'J社' else off_t_def
     init_mode = '委託配達' if (sub_j or sub_t) else '自社配達'
     
     rows.append({
-        '市町村コード': code,
-        '市町村名': city,
-        '配達方式': init_mode,
-        '市町村一括担当': best_comp,
-        '市町村一括担当営業所': best_off,
-        'J社個別': '-',
-        'T社個別': '-',
+        '市町村コード': code, '市町村名': city, '配達方式': init_mode,
+        '市町村一括担当': best_comp, '市町村一括担当営業所': best_off,
+        'J社個別': '-', 'T社個別': '-',
         'J社 距離(km)': dist_j, 'J社 配達重量(kg)': wt_j_kg, 'J社 トンキロ(t・km)': tk_j,
         'T社 距離(km)': dist_t, 'T社 配達重量(kg)': wt_t_kg, 'T社 トンキロ(t・km)': tk_t,
-        '_j_def_off': off_j_def, '_t_def_off': off_t_def,
-        '_sub_j': sub_j, '_sub_t': sub_t
+        '_j_def_off': off_j_def, '_t_def_off': off_t_def, '_sub_j': sub_j, '_sub_t': sub_t
     })
 
 base_df = pd.DataFrame(rows)
@@ -215,6 +246,22 @@ else:
     base_df['市町村一括担当'] = 'なし'; base_df['市町村一括担当営業所'] = '-'
     base_df['J社個別'] = '-'; base_df['T社個別'] = '-'
 
+# 初期表示データのリアルタイム事前更新（データの食い違い・更新遅れの完全防止）
+for idx in range(len(base_df)):
+    r = base_df.iloc[idx]
+    c_name = r['市町村名']
+    b_off = r['市町村一括担当営業所']
+    j_ind = r['J社個別']
+    t_ind = r['T社個別']
+    wt_j = r['J社 配達重量(kg)']
+    wt_t = r['T社 配達重量(kg)']
+    
+    dj, tkj, dt, tkt = compute_distance_and_tonkm(c_name, b_off, j_ind, t_ind, wt_j, wt_t, all_office_info, MUNICIPAL_HALL_COORDS)
+    base_df.at[idx, 'J社 距離(km)'] = dj
+    base_df.at[idx, 'J社 トンキロ(t・km)'] = tkj
+    base_df.at[idx, 'T社 距離(km)'] = dt
+    base_df.at[idx, 'T社 トンキロ(t・km)'] = tkt
+
 # 5. タブUI構成
 tab1, tab2, tab3 = st.tabs(["📊 全体サマリー＆現状比較", "🏢 会社別・営業所別集計", "📝 市町村別・受持選択（編集）"])
 
@@ -234,10 +281,7 @@ with tab3:
         if st.button("J社 営業所を追加", key="btn_add_j"):
             if j_new_name and j_new_addr:
                 st.session_state.custom_offices.append({
-                    'company': 'J社',
-                    'name': j_new_name,
-                    'address': j_new_addr,
-                    'coords': (34.8161, 135.5683)
+                    'company': 'J社', 'name': j_new_name, 'address': j_new_addr, 'coords': (34.8161, 135.5683)
                 })
                 st.success("J社新規営業所「" + j_new_name + "」を追加しました！")
                 st.rerun()
@@ -249,17 +293,14 @@ with tab3:
         if st.button("T社 営業所を追加", key="btn_add_t"):
             if t_new_name and t_new_addr:
                 st.session_state.custom_offices.append({
-                    'company': 'T社',
-                    'name': t_new_name,
-                    'address': t_new_addr,
-                    'coords': (34.5731, 135.4831)
+                    'company': 'T社', 'name': t_new_name, 'address': t_new_addr, 'coords': (34.5731, 135.4831)
                 })
                 st.success("T社新規営業所「" + t_new_name + "」を追加しました！")
                 st.rerun()
 
     st.markdown("---")
     st.subheader("📝 市町村別・受持選択テーブル")
-    st.caption("※ 距離優先順位：①市町村一括担当営業所 ＞ ②個別の選択営業所 ＞ ③デフォルト営業所")
+    st.caption("※ 距離優先適用ルール：①市町村一括担当営業所 ＞ ②各社個別の選択営業所 ＞ ③未指定時は 0.0 km")
     
     display_cols = [
         '市町村コード', '市町村名', '配達方式', '市町村一括担当', '市町村一括担当営業所',
@@ -274,8 +315,8 @@ with tab3:
             "配達方式": st.column_config.SelectboxColumn("配達方式", options=["自社配達", "委託配達"], required=True),
             "市町村一括担当": st.column_config.SelectboxColumn("市町村一括担当", options=["なし", "J社", "T社"], required=True),
             "市町村一括担当営業所": st.column_config.SelectboxColumn("市町村一括担当営業所", options=ALL_OFFICES + ["-"], required=True),
-            "J社個別": st.column_config.SelectboxColumn("J社個別 (プルダウン選択)", options=J_OFFICES + ["-"], required=True),
-            "T社個別": st.column_config.SelectboxColumn("T社個別 (プルダウン選択)", options=T_OFFICES + ["-"], required=True),
+            "J社個別": st.column_config.SelectboxColumn("J社個別", options=J_OFFICES + ["-"], required=True),
+            "T社個別": st.column_config.SelectboxColumn("T社個別", options=T_OFFICES + ["-"], required=True),
             "J社 距離(km)": st.column_config.NumberColumn("J社 距離 (km)", format="%.1f"),
             "J社 配達重量(kg)": st.column_config.NumberColumn("J社 配達重量 (kg)", format="%d"),
             "J社 トンキロ(t・km)": st.column_config.NumberColumn("J社 トンキロ (t・km)", format="%.2f"),
@@ -288,7 +329,7 @@ with tab3:
         hide_index=True
     )
 
-    # リアルタイム再計算処理（距離優先ロジック ③ & ④ 反映）
+    # リアルタイム再計算＆シミュレーション集計
     for idx, r in edited_df.iterrows():
         orig = base_df.loc[idx]
         city_name = orig['市町村名']
@@ -300,45 +341,16 @@ with tab3:
         j_indiv_off = r['J社個別']
         t_indiv_off = r['T社個別']
         
-        # 距離適用営業所の決定ロジック (③最優先:一括担当営業所 ＞ ④個別営業所 ＞ デフォルト)
-        # J社 営業所判定
-        if bulk_off != '-':
-            target_j_off = bulk_off
-        elif j_indiv_off != '-':
-            target_j_off = j_indiv_off
-        else:
-            target_j_off = orig['_j_def_off']
-            
-        # T社 営業所判定
-        if bulk_off != '-':
-            target_t_off = bulk_off
-        elif t_indiv_off != '-':
-            target_t_off = t_indiv_off
-        else:
-            target_t_off = orig['_t_def_off']
-            
-        c_lat, c_lon = MUNICIPAL_HALL_COORDS.get(city_name, (34.6853, 135.5208))
-        
-        # J社 距離座標取得
-        j_coords = all_office_info.get(('J社', target_j_off), {}).get('coords')
-        if not j_coords:
-            j_coords = all_office_info.get(('T社', target_j_off), {}).get('coords', (34.6853, 135.5208))
-            
-        # T社 距離座標取得
-        t_coords = all_office_info.get(('T社', target_t_off), {}).get('coords')
-        if not t_coords:
-            t_coords = all_office_info.get(('J社', target_t_off), {}).get('coords', (34.6853, 135.5208))
-            
-        dist_j = calc_haversine_distance(j_coords[0], j_coords[1], c_lat, c_lon)
-        dist_t = calc_haversine_distance(t_coords[0], t_coords[1], c_lat, c_lon)
-        
         wt_j_kg = orig['J社 配達重量(kg)']
         wt_t_kg = orig['T社 配達重量(kg)']
-        wt_j_t = wt_j_kg / 1000.0
-        wt_t_t = wt_t_kg / 1000.0
         
-        tk_j = round(dist_j * wt_j_t, 2)
-        tk_t = round(dist_t * wt_t_t, 2)
+        dist_j, tk_j, dist_t, tk_t = compute_distance_and_tonkm(city_name, bulk_off, j_indiv_off, t_indiv_off, wt_j_kg, wt_t_kg, all_office_info, MUNICIPAL_HALL_COORDS)
+        
+        # エディタ画面表示用数値をリアルタイム更新
+        edited_df.at[idx, 'J社 距離(km)'] = dist_j
+        edited_df.at[idx, 'J社 トンキロ(t・km)'] = tk_j
+        edited_df.at[idx, 'T社 距離(km)'] = dist_t
+        edited_df.at[idx, 'T社 トンキロ(t・km)'] = tk_t
         
         indiv_selected = []
         if j_indiv_off != '-': indiv_selected.append('J社')
@@ -346,11 +358,14 @@ with tab3:
         
         map_status_dict[city_name] = {
             '一括担当': bulk_comp,
-            '一括営業所': bulk_off if bulk_off != '-' else (target_j_off if bulk_comp == 'J社' else target_t_off),
+            '一括営業所': bulk_off if bulk_off != '-' else (j_indiv_off if bulk_comp == 'J社' and j_indiv_off != '-' else (t_indiv_off if bulk_comp == 'T社' and t_indiv_off != '-' else orig['_j_def_off'] if bulk_comp == 'J社' else orig['_t_def_off'])),
             '個別選択': indiv_selected
         }
         
+        wt_j_t = wt_j_kg / 1000.0
+        wt_t_t = wt_t_kg / 1000.0
         has_indiv = (j_indiv_off != '-') or (t_indiv_off != '-')
+        
         if has_indiv:
             if j_indiv_off != '-':
                 sub = is_sub_mode or orig['_sub_j']
@@ -370,7 +385,7 @@ with tab3:
                 })
         else:
             if bulk_comp in ['J社', 'T社']:
-                assigned_off = target_j_off if bulk_comp == 'J社' else target_t_off
+                assigned_off = bulk_off if bulk_off != '-' else (orig['_j_def_off'] if bulk_comp == 'J社' else orig['_t_def_off'])
                 c_code = bulk_comp[0]
                 sub = is_sub_mode or (orig['_sub_j'] if c_code == 'J' else orig['_sub_t'])
                 
@@ -384,6 +399,26 @@ with tab3:
                     '担当営業所': assigned_off, '営業所表示': assigned_off + ('（委託）' if sub else ''),
                     '重量_t': total_wt, '距離_km': avg_dist, 'トンキロ': total_tk,
                 })
+
+    # Excel出力機能（③）
+    excel_output_bytes = io.BytesIO()
+    with pd.ExcelWriter(excel_output_bytes, engine='openpyxl') as writer:
+        if st.session_state.custom_offices:
+            df_cust_export = pd.DataFrame(st.session_state.custom_offices)[['company', 'name', 'address']].rename(columns={
+                'company': '担当会社', 'name': '新規営業所名', 'address': '所在地住所'
+            })
+        else:
+            df_cust_export = pd.DataFrame(columns=['担当会社', '新規営業所名', '所在地住所'])
+        df_cust_export.to_excel(writer, sheet_name='新規営業所一覧', index=False)
+        edited_df[display_cols].to_excel(writer, sheet_name='市町村別・受持選択', index=False)
+
+    st.write("")
+    st.download_button(
+        label="📥 設定結果・シミュレーションデータをExcel出力",
+        data=excel_output_bytes.getvalue(),
+        file_name="配達エリアシミュレーション結果.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
     st.markdown("---")
     st.subheader("🗺️ 大阪府 市区町村別受持選択 白地図エリアマップ")
