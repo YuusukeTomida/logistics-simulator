@@ -105,7 +105,6 @@ for i in range(len(df_j)):
     sub_j = str(df_j.loc[i, 'J社外部委託地域']).strip() == '◯'
     sub_t = str(df_t.loc[i, 'T社外部委託地域']).strip() == '◯'
     
-    # 距離計算（ダミー計算例）
     dist_j = round(5.0 + (i * 3 % 17) + (i % 5) * 1.2, 1)
     dist_t = round(4.5 + (i * 5 % 19) + (i % 4) * 1.5, 1)
     
@@ -310,8 +309,9 @@ with tab1:
 
     st.write("")
 
+    # 指定された画像ファイル（画像3.jpg）を読み込み
     map_img_path = None
-    for target_path in ["画像2.jpg", "画像2.png", "osaka_map.jpg", "osaka_map.png"]:
+    for target_path in ["画像3.jpg", "画像3.png", "画像2.jpg", "画像2.png"]:
         if os.path.exists(target_path):
             map_img_path = target_path
             break
@@ -323,7 +323,6 @@ with tab1:
         h, w, _ = src_img.shape
         
         gray = cv2.cvtColor(src_img, cv2.COLOR_BGR2GRAY)
-        # 黒背景・白線の画像に対応
         if np.mean(gray) < 100:
             line_bin = (gray > 50).astype(np.uint8) * 255
         else:
@@ -396,9 +395,12 @@ with tab1:
         else:
             cropped_img = canvas_rgb
 
-        st.image(cropped_img, use_container_width=True)
+        # 地図表示サイズの適正化（カラム配置で中央にコンパクト表示）
+        map_col1, map_col2, map_col3 = st.columns([1, 2, 1])
+        with map_col2:
+            st.image(cropped_img, use_container_width=True)
     else:
-        st.warning("マップ画像が見つかりません。`画像2.jpg` を配置してください。")
+        st.warning("マップ画像が見つかりません。`画像3.jpg` を配置してください。")
 
 # タブ2: 会社別 & 営業所別 詳細集計
 with tab2:
