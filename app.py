@@ -318,13 +318,29 @@ with tab1:
     st.subheader("🗺️ 埼玉県 市町村別受持選択 白地図エリアマップ")
     st.caption("塗り分け：営業所毎の配色（🔴 A社系: 赤グラデーション, 🔵 B社系: 青グラデーション, 🟢 C社系: 緑グラデーション, ⚪ 未設定: 灰）")
 
-    # 凡例表示（構文エラー回避のため完全にクリーンなHTML・ダブルクォートで構築）
+    # 凡例表示（HTMLエスケープエラーを防止するため Streamlit のコンテナで表示）
     st.markdown("##### 📌 営業所別 カラー凡例（濃淡グラデーション）")
     leg_cols = st.columns(3)
     
     with leg_cols[0]:
-        st.markdown("**🔴 A社 営業所**")
+        st.write("**🔴 A社 営業所**")
         for off in A_OFFICES:
             c = OFFICE_COLOR_MAP.get(off, (239, 68, 68))
             hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
-            html_box = f'
+            st.markdown(f' **{off}**', unsafe_allow_html=True)
+            
+    with leg_cols[1]:
+        st.write("**🔵 B社 営業所**")
+        for off in B_OFFICES:
+            c = OFFICE_COLOR_MAP.get(off, (59, 130, 246))
+            hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
+            st.markdown(f' **{off}**', unsafe_allow_html=True)
+            
+    with leg_cols[2]:
+        st.write("**🟢 C社 営業所**")
+        for off in C_OFFICES:
+            c = OFFICE_COLOR_MAP.get(off, (16, 185, 129))
+            hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
+            st.markdown(f' **{off}**', unsafe_allow_html=True)
+
+    st.markdown("
