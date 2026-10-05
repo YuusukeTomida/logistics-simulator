@@ -143,7 +143,7 @@ EXTRA_SEEDS = {
     '泉佐野市': [(236, 1101)]
 }
 
-# 4. ベースデータ作成（距離・重量・トンキロ算出手順を含む）
+# 4. ベースデータ作成
 all_office_info = dict(EXISTING_OFFICES_INFO)
 for cust in st.session_state.custom_offices:
     all_office_info[(cust['company'], cust['name'])] = {'address': cust['address'], 'coords': cust['coords']}
@@ -180,7 +180,8 @@ for i in range(len(df_j)):
         '配達方式': init_mode,
         '市町村一括担当': best_comp,
         '市町村一括担当営業所': best_off,
-        'J社個別': False, 'T社個別': False,
+        'J社個別': '-',
+        'T社個別': '-',
         'J社 距離(km)': dist_j, 'J社 配達重量(kg)': wt_j_kg, 'J社 トンキロ(t・km)': tk_j,
         'T社 距離(km)': dist_t, 'T社 配達重量(kg)': wt_t_kg, 'T社 トンキロ(t・km)': tk_t,
         '_j_def_off': off_j_def, '_t_def_off': off_t_def,
@@ -203,16 +204,16 @@ if "最少トンキロ" in rule:
         best_off = r['_j_def_off'] if best == 'J社' else r['_t_def_off']
         base_df.loc[idx, '市町村一括担当'] = best
         base_df.loc[idx, '市町村一括担当営業所'] = best_off
-        base_df.loc[idx, 'J社個別'] = False; base_df.loc[idx, 'T社個別'] = False
+        base_df.loc[idx, 'J社個別'] = '-'; base_df.loc[idx, 'T社個別'] = '-'
 elif "J社一括" in rule:
     base_df['市町村一括担当'] = 'J社'; base_df['市町村一括担当営業所'] = base_df['_j_def_off']
-    base_df['J社個別'] = False; base_df['T社個別'] = False
+    base_df['J社個別'] = '-'; base_df['T社個別'] = '-'
 elif "T社一括" in rule:
     base_df['市町村一括担当'] = 'T社'; base_df['市町村一括担当営業所'] = base_df['_t_def_off']
-    base_df['J社個別'] = False; base_df['T社個別'] = False
+    base_df['J社個別'] = '-'; base_df['T社個別'] = '-'
 else:
     base_df['市町村一括担当'] = 'なし'; base_df['市町村一括担当営業所'] = '-'
-    base_df['J社個別'] = False; base_df['T社個別'] = False
+    base_df['J社個別'] = '-'; base_df['T社個別'] = '-'
 
 # 5. タブUI構成
 tab1, tab2, tab3 = st.tabs(["📊 全体サマリー＆現状比較", "🏢 会社別・営業所別集計", "📝 市町村別・受持選択（編集）"])
@@ -232,7 +233,6 @@ with tab3:
         j_new_addr = st.text_input("J社 所在地住所", key="j_off_addr_input", placeholder="例: 大阪府茨木市駅前1-1-1")
         if st.button("J社 営業所を追加", key="btn_add_j"):
             if j_new_name and j_new_addr:
-                # 簡易位置設定（市役所中心位置を基準）
                 st.session_state.custom_offices.append({
                     'company': 'J社',
                     'name': j_new_name,
@@ -259,7 +259,7 @@ with tab3:
 
     st.markdown("---")
     st.subheader("📝 市町村別・受持選択テーブル")
-    st.caption("※ 添付出力イメージ構成：市町村別の営業所距離（km）、配達重量（kg）、トンキロ（t・km）を動的計算します。")
+    st.caption("※ 距離優先順位：①市町村一括担当営業所 ＞ ②個別の選択営業所 ＞ ③デフォルト営業所")
     
     display_cols = [
         '市町村コード', '市町村名', '配達方式', '市町村一括担当', '市町村一括担当営業所',
@@ -274,8 +274,8 @@ with tab3:
             "配達方式": st.column_config.SelectboxColumn("配達方式", options=["自社配達", "委託配達"], required=True),
             "市町村一括担当": st.column_config.SelectboxColumn("市町村一括担当", options=["なし", "J社", "T社"], required=True),
             "市町村一括担当営業所": st.column_config.SelectboxColumn("市町村一括担当営業所", options=ALL_OFFICES + ["-"], required=True),
-            "J社個別": st.column_config.CheckboxColumn("J社個別", default=False),
-            "T社個別": st.column_config.CheckboxColumn("T社個別", default=False),
+            "J社個別": st.column_config.SelectboxColumn("J社個別 (プルダウン選択)", options=J_OFFICES + ["-"], required=True),
+            "T社個別": st.column_config.SelectboxColumn("T社個別 (プルダウン選択)", options=T_OFFICES + ["-"], required=True),
             "J社 距離(km)": st.column_config.NumberColumn("J社 距離 (km)", format="%.1f"),
             "J社 配達重量(kg)": st.column_config.NumberColumn("J社 配達重量 (kg)", format="%d"),
             "J社 トンキロ(t・km)": st.column_config.NumberColumn("J社 トンキロ (t・km)", format="%.2f"),
@@ -288,7 +288,7 @@ with tab3:
         hide_index=True
     )
 
-    # リアルタイム再計算処理
+    # リアルタイム再計算処理（距離優先ロジック ③ & ④ 反映）
     for idx, r in edited_df.iterrows():
         orig = base_df.loc[idx]
         city_name = orig['市町村名']
@@ -297,21 +297,38 @@ with tab3:
         
         bulk_comp = r['市町村一括担当']
         bulk_off = r['市町村一括担当営業所']
-        j_indiv = r['J社個別']
-        t_indiv = r['T社個別']
+        j_indiv_off = r['J社個別']
+        t_indiv_off = r['T社個別']
         
-        j_off_name = orig['_j_def_off']
-        t_off_name = orig['_t_def_off']
-        
-        if bulk_comp == 'J社' and bulk_off != '-':
-            j_off_name = bulk_off
-        elif bulk_comp == 'T社' and bulk_off != '-':
-            t_off_name = bulk_off
+        # 距離適用営業所の決定ロジック (③最優先:一括担当営業所 ＞ ④個別営業所 ＞ デフォルト)
+        # J社 営業所判定
+        if bulk_off != '-':
+            target_j_off = bulk_off
+        elif j_indiv_off != '-':
+            target_j_off = j_indiv_off
+        else:
+            target_j_off = orig['_j_def_off']
+            
+        # T社 営業所判定
+        if bulk_off != '-':
+            target_t_off = bulk_off
+        elif t_indiv_off != '-':
+            target_t_off = t_indiv_off
+        else:
+            target_t_off = orig['_t_def_off']
             
         c_lat, c_lon = MUNICIPAL_HALL_COORDS.get(city_name, (34.6853, 135.5208))
-        j_coords = all_office_info.get(('J社', j_off_name), {}).get('coords', (34.6853, 135.5208))
-        t_coords = all_office_info.get(('T社', t_off_name), {}).get('coords', (34.6853, 135.5208))
         
+        # J社 距離座標取得
+        j_coords = all_office_info.get(('J社', target_j_off), {}).get('coords')
+        if not j_coords:
+            j_coords = all_office_info.get(('T社', target_j_off), {}).get('coords', (34.6853, 135.5208))
+            
+        # T社 距離座標取得
+        t_coords = all_office_info.get(('T社', target_t_off), {}).get('coords')
+        if not t_coords:
+            t_coords = all_office_info.get(('J社', target_t_off), {}).get('coords', (34.6853, 135.5208))
+            
         dist_j = calc_haversine_distance(j_coords[0], j_coords[1], c_lat, c_lon)
         dist_t = calc_haversine_distance(t_coords[0], t_coords[1], c_lat, c_lon)
         
@@ -324,36 +341,36 @@ with tab3:
         tk_t = round(dist_t * wt_t_t, 2)
         
         indiv_selected = []
-        if j_indiv: indiv_selected.append('J社')
-        if t_indiv: indiv_selected.append('T社')
+        if j_indiv_off != '-': indiv_selected.append('J社')
+        if t_indiv_off != '-': indiv_selected.append('T社')
         
         map_status_dict[city_name] = {
             '一括担当': bulk_comp,
-            '一括営業所': bulk_off if bulk_off != '-' else (j_off_name if bulk_comp == 'J社' else t_off_name),
+            '一括営業所': bulk_off if bulk_off != '-' else (target_j_off if bulk_comp == 'J社' else target_t_off),
             '個別選択': indiv_selected
         }
         
-        has_indiv = j_indiv or t_indiv
+        has_indiv = (j_indiv_off != '-') or (t_indiv_off != '-')
         if has_indiv:
-            if j_indiv:
+            if j_indiv_off != '-':
                 sub = is_sub_mode or orig['_sub_j']
                 active_records.append({
                     '市区町村コード': city_code, '市区町村名': city_name,
                     '担当会社': 'J社', '会社表示': 'J社（委託）' if sub else 'J社',
-                    '担当営業所': j_off_name, '営業所表示': j_off_name + ('（委託）' if sub else ''),
+                    '担当営業所': j_indiv_off, '営業所表示': j_indiv_off + ('（委託）' if sub else ''),
                     '重量_t': wt_j_t, '距離_km': dist_j, 'トンキロ': tk_j,
                 })
-            if t_indiv:
+            if t_indiv_off != '-':
                 sub = is_sub_mode or orig['_sub_t']
                 active_records.append({
                     '市区町村コード': city_code, '市区町村名': city_name,
                     '担当会社': 'T社', '会社表示': 'T社（委託）' if sub else 'T社',
-                    '担当営業所': t_off_name, '営業所表示': t_off_name + ('（委託）' if sub else ''),
+                    '担当営業所': t_indiv_off, '営業所表示': t_indiv_off + ('（委託）' if sub else ''),
                     '重量_t': wt_t_t, '距離_km': dist_t, 'トンキロ': tk_t,
                 })
         else:
             if bulk_comp in ['J社', 'T社']:
-                assigned_off = bulk_off if bulk_off != '-' else (j_off_name if bulk_comp == 'J社' else t_off_name)
+                assigned_off = target_j_off if bulk_comp == 'J社' else target_t_off
                 c_code = bulk_comp[0]
                 sub = is_sub_mode or (orig['_sub_j'] if c_code == 'J' else orig['_sub_t'])
                 
