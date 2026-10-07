@@ -145,11 +145,11 @@ all_office_info = dict(EXISTING_OFFICES_INFO)
 for cust in st.session_state.custom_offices:
     all_office_info[(cust['company'], cust['name'])] = {'address': cust['address'], 'coords': cust['coords']}
 
-# 4. 距離・トンキロ算出関数（③一括担当選択時の距離同一化・①未指定時0kmの修正）
+# 4. 距離・トンキロ算出関数
 def compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_indiv_off, wt_j_kg, wt_t_kg, office_info, municipal_coords):
     c_lat, c_lon = municipal_coords.get(city_name, (34.6853, 135.5208))
     
-    # ③「市町村一括担当営業所」が指定されている場合は、その営業所の単一座標から計算（J社・T社距離を完全同一に揃える）
+    # 一括担当営業所が指定されている場合は単一座標から同一距離を算出
     if bulk_off != '-' and bulk_off is not None:
         c_prefix = bulk_comp if bulk_comp in ['J社', 'T社'] else 'J社'
         coords = office_info.get((c_prefix, bulk_off), {}).get('coords')
@@ -165,7 +165,7 @@ def compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_in
             dist_j = 0.0
             dist_t = 0.0
     else:
-        # ① J社個別指定から距離算出（未指定なら 0.0 km）
+        # J社個別指定（未指定なら 0.0 km）
         if j_indiv_off != '-' and j_indiv_off is not None:
             j_coords = office_info.get(('J社', j_indiv_off), {}).get('coords')
             if not j_coords:
@@ -174,7 +174,7 @@ def compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_in
         else:
             dist_j = 0.0
             
-        # ① T社個別指定から距離算出（未指定なら 0.0 km）
+        # T社個別指定（未指定なら 0.0 km）
         if t_indiv_off != '-' and t_indiv_off is not None:
             t_coords = office_info.get(('T社', t_indiv_off), {}).get('coords')
             if not t_coords:
@@ -188,7 +188,7 @@ def compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_in
     
     return dist_j, tk_j, dist_t, tk_t
 
-# セッション状態でのテーブルデータ管理（②ボタン押下時の再計算反映用）
+# ① 初期の割当ルールの設定（一括「なし」、一括営業所「-」、個別に各社の現状営業所を設定）
 if "table_data" not in st.session_state:
     rows = []
     for i in range(len(df_j)):
@@ -200,18 +200,14 @@ if "table_data" not in st.session_state:
         sub_j = str(df_j.loc[i, 'J社外部委託地域']).strip() == '◯'
         sub_t = str(df_t.loc[i, 'T社外部委託地域']).strip() == '◯'
         
-        dist_j, tk_j, dist_t, tk_t = compute_distance_and_tonkm(city, 'J社', off_j_def, '-', '-', wt_j_kg, wt_t_kg, all_office_info, MUNICIPAL_HALL_COORDS)
-        best_comp = 'J社' if tk_j <= tk_t else 'T社'
-        best_off = off_j_def if best_comp == 'J社' else off_t_def
-        
-        # 再計算
-        dist_j, tk_j, dist_t, tk_t = compute_distance_and_tonkm(city, best_comp, best_off, '-', '-', wt_j_kg, wt_t_kg, all_office_info, MUNICIPAL_HALL_COORDS)
+        # 個別に現状営業所（off_j_def / off_t_def）を設定して距離を算出
+        dist_j, tk_j, dist_t, tk_t = compute_distance_and_tonkm(city, 'なし', '-', off_j_def, off_t_def, wt_j_kg, wt_t_kg, all_office_info, MUNICIPAL_HALL_COORDS)
         init_mode = '委託配達' if (sub_j or sub_t) else '自社配達'
         
         rows.append({
             '市町村コード': code, '市町村名': city, '配達方式': init_mode,
-            '市町村一括担当': best_comp, '市町村一括担当営業所': best_off,
-            'J社個別': '-', 'T社個別': '-',
+            '市町村一括担当': 'なし', '市町村一括担当営業所': '-',
+            'J社個別': off_j_def, 'T社個別': off_t_def,
             'J社 距離(km)': dist_j, 'J社 配達重量(kg)': wt_j_kg, 'J社 トンキロ(t・km)': tk_j,
             'T社 距離(km)': dist_t, 'T社 配達重量(kg)': wt_t_kg, 'T社 トンキロ(t・km)': tk_t,
             '_j_def_off': off_j_def, '_t_def_off': off_t_def, '_sub_j': sub_j, '_sub_t': sub_t
@@ -225,11 +221,18 @@ st.sidebar.markdown("---")
 st.sidebar.header("🎯 自動一括割り当て")
 rule = st.sidebar.radio(
     "一括設定ルールを選択",
-    ["最少トンキロ最適化（初期自動選択）", "全市町村 J社一括", "全市町村 T社一括", "選択クリア"]
+    ["初期状態（一括なし・両社個別現状割り当て）", "最少トンキロ最適化", "全市町村 J社一括", "全市町村 T社一括", "選択クリア"]
 )
 
 if st.sidebar.button("一括ルールを適用"):
-    if "最少トンキロ" in rule:
+    if "初期状態" in rule:
+        for idx in range(len(base_df)):
+            r = base_df.iloc[idx]
+            base_df.loc[idx, '市町村一括担当'] = 'なし'
+            base_df.loc[idx, '市町村一括担当営業所'] = '-'
+            base_df.loc[idx, 'J社個別'] = r['_j_def_off']
+            base_df.loc[idx, 'T社個別'] = r['_t_def_off']
+    elif "最少トンキロ" in rule:
         for idx, r in base_df.iterrows():
             dj, tkj, dt, tkt = compute_distance_and_tonkm(r['市町村名'], 'J社', r['_j_def_off'], '-', '-', r['J社 配達重量(kg)'], r['T社 配達重量(kg)'], all_office_info, MUNICIPAL_HALL_COORDS)
             best = 'J社' if tkj <= tkt else 'T社'
@@ -303,11 +306,9 @@ with tab3:
 
     col_btn1, col_btn2 = st.columns([2, 3])
     with col_btn1:
-        # ① & ②「配達支店変更を反映」ボタン（押下時に営業所に合わせた距離・トンキロを計算）
         recalc_clicked = st.button("🔄 配達支店変更を反映（距離・トンキロ再計算）", type="primary", use_container_width=True)
         
     with col_btn2:
-        # ③ Excel出力ボタン
         excel_output_bytes = io.BytesIO()
         with pd.ExcelWriter(excel_output_bytes, engine='openpyxl') as writer:
             if st.session_state.custom_offices:
@@ -348,7 +349,7 @@ with tab3:
         key="main_data_editor"
     )
 
-    # 「配達支店変更を反映」ボタン押下時に距離＆トンキロを一括更新
+    # 「配達支店変更を反映」ボタン押下時の再計算処理
     if recalc_clicked:
         for idx in range(len(edited_df)):
             r = edited_df.iloc[idx]
@@ -376,7 +377,7 @@ with tab3:
         st.success("最新の営業所選択に合わせて距離およびトンキロを再計算しました！")
         st.rerun()
 
-    # シミュレーション・マップ連動用の集計処理
+    # シミュレーション集計 ＆ 白地図ステータス保持
     for idx, r in edited_df.iterrows():
         orig = base_df.loc[idx]
         city_name = orig['市町村名']
@@ -445,7 +446,7 @@ with tab3:
 
     st.markdown("---")
     st.subheader("🗺️ 大阪府 市区町村別受持選択 白地図エリアマップ")
-    st.caption("塗り分け：営業所毎の配色（🔴 J社系: 赤グラデーション, 🔵 T社系: 青グラデーション, ⚪ 未設定: 灰）")
+    st.caption("塗り分け：一括割り当て＝営業所配色グラデーション, 一括なし＋個別選択＝灰色, 未設定＝白色")
 
     leg_cols = st.columns(2)
     with leg_cols[0]:
@@ -494,16 +495,15 @@ with tab3:
             bulk_off = info['一括営業所']
             indivs = info['個別選択']
             
+            # ② 白地図マップの着色色判定（一括担当＝営業所色, 個別のみ＝灰色, 未設定＝白色）
             if bulk == 'J社' and bulk_off in J_OFFICE_COLOR_MAP:
                 fill_rgb = J_OFFICE_COLOR_MAP[bulk_off]
             elif bulk == 'T社' and bulk_off in T_OFFICE_COLOR_MAP:
                 fill_rgb = T_OFFICE_COLOR_MAP[bulk_off]
+            elif bulk == 'なし' and len(indivs) > 0:
+                fill_rgb = (200, 200, 200) # 個別選択時は「灰色」
             else:
-                DEFAULT_RGB = {'J社': (239, 68, 68), 'T社': (59, 130, 246), 'なし': (220, 225, 230)}
-                fill_rgb = DEFAULT_RGB.get(bulk, (220, 225, 230))
-                
-            if bulk == 'なし' and len(indivs) > 0:
-                fill_rgb = (220, 225, 230)
+                fill_rgb = (255, 255, 255) # 未設定（一括なし＆個別なし）は「白色」
 
             target_coords = [(sx, sy)]
             if c_name in EXTRA_SEEDS:
