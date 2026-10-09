@@ -295,7 +295,7 @@ def build_initial_scenario_df(office_info_dict):
         })
     return pd.DataFrame(rows)
 
-# 受持選択（編集）用 4つの複製パターン（案1〜案4）の独立したディープコピー初期化
+# ② 受持選択（編集）用 4つの複製パターン（案1〜案4）の独立したディープコピー初期化
 for p_idx in [1, 2, 3, 4]:
     key_name = f"table_data_p{p_idx}"
     if key_name not in st.session_state:
@@ -456,17 +456,11 @@ for p_idx in [1, 2, 3, 4]:
             wt_j_t = wt_j_kg / 1000.0
             wt_t_t = wt_t_kg / 1000.0
             
-            indiv_selected = []
-            if j_indiv_off != '-': indiv_selected.append('J社')
-            if t_indiv_off != '-': indiv_selected.append('T社')
-            
             p_map_dict[city_name] = {
                 '一括担当': bulk_comp,
                 '一括営業所': bulk_off if bulk_off != '-' else (j_indiv_off if bulk_comp == 'J社' and j_indiv_off != '-' else (t_indiv_off if bulk_comp == 'T社' and t_indiv_off != '-' else orig['_j_def_off'] if bulk_comp == 'J社' else orig['_t_def_off'])),
                 'j_indiv_off': j_indiv_off,
-                't_indiv_off': t_indiv_off,
-                'orig_j_def': orig['_j_def_off'],
-                'orig_t_def': orig['_t_def_off']
+                't_indiv_off': t_indiv_off
             }
             
             has_indiv = (j_indiv_off != '-') or (t_indiv_off != '-')
@@ -560,15 +554,15 @@ for p_idx in [1, 2, 3, 4]:
                 j_indiv_off = info.get('j_indiv_off', '-')
                 t_indiv_off = info.get('t_indiv_off', '-')
                 
-                # ② 地図色塗りルールの元に戻し処理（一括＝営業所色, 個別選択あり＝灰色, 未設定＝白色）
+                # ③ 一括担当「なし」のときに個別選択あり＝灰色、未設定＝白色の着色色判定に復元
                 if bulk == 'J社' and bulk_off in j_color_map_p:
                     fill_rgb = j_color_map_p[bulk_off]
                 elif bulk == 'T社' and bulk_off in t_color_map_p:
                     fill_rgb = t_color_map_p[bulk_off]
                 elif bulk in ['なし', '-'] and ((j_indiv_off != '-') or (t_indiv_off != '-')):
-                    fill_rgb = (200, 200, 200) # 個別選択時は灰色
+                    fill_rgb = (200, 200, 200) # 個別選択あり＝灰色
                 else:
-                    fill_rgb = (255, 255, 255) # 未設定（一括なし＆個別なし）は白色
+                    fill_rgb = (255, 255, 255) # 未設定＝白色
 
                 target_coords = [(sx, sy)]
                 if c_name in EXTRA_SEEDS:
@@ -621,7 +615,7 @@ with tabs[0]:
     st.subheader("📈 会社毎の「現状」vs「4つの変更案（案1〜案4）」一括比較サマリー")
     st.caption("全4パターンの変更案でのトンキロ、配達重量、削減率を一覧で一括比較します。")
 
-    # ① 現状基準データフレーム（同一算出基準による初期集計）
+    # ② 現状基準データフレーム（完全同一算出基準による安定初期集計）
     base_0_df = build_initial_scenario_df(EXISTING_OFFICES_INFO)
     
     cur_j_wt_total = base_0_df['J社 配達重量(kg)'].sum() / 1000.0
@@ -634,7 +628,7 @@ with tabs[0]:
         {'パターン': '現状（基本）', '会社': 'T社', '担当自治体数': len(base_0_df), '配達重量_t': round(cur_t_wt_total, 2), 'トンキロ': round(cur_t_tk_total, 2), 'トンキロ削減量': 0.0, '削減率(%)': 0.0}
     ]
 
-    # ① 全案の最新リアルタイムデータからの完全同期集計（100%数値一致保証）
+    # ② 全案の最新リアルタイムデータからの完全同期集計（100%数値一致保証）
     for p_idx in [1, 2, 3, 4]:
         p_df = st.session_state[f"table_data_p{p_idx}"]
         
@@ -680,7 +674,7 @@ with tabs[0]:
 
     summary_df = pd.DataFrame(summary_rows)
 
-    # 全体サマリーへの一括Excel出力ボタン（ご指定通りの出力位置セルマッピング）
+    # 全体サマリーへの一括Excel出力ボタン（①ご指定通りの正確なセル配置マッピング）
     excel_full_bytes = io.BytesIO()
     with pd.ExcelWriter(excel_full_bytes, engine='openpyxl') as writer:
         all_cust_rows = []
@@ -707,7 +701,7 @@ with tabs[0]:
         ws_map = wb.create_sheet(title="白地図エリアマップ")
         ws_map['A1'] = "🗺️ 大阪府 市区町村別受持選択 白地図エリアマップ（案1〜案4 比較一覧）"
         
-        # ご指定通りの配置セル位置マッピング
+        # ① ご指定通りの配置セル位置マッピング
         # 案1: B2/B3, 案2: K2/K3, 案3: T2/T3, 案4: AC2/AC3
         map_cell_positions = {
             1: ('B', 2, 3),   # 案1
@@ -801,4 +795,19 @@ with tabs[1]:
         )
         
         st.markdown("---")
-        st.markdown(
+        st.markdown(f"#### 🏬 案{selected_p} 営業所別 集計（自社配達 vs 外部委託）")
+        off_sub_summary = p_act_df.groupby(['担当会社', '営業所表示']).agg(
+            担当件数=('市区町村コード', 'count'),
+            合計配達重量_t=('重量_t', 'sum'),
+            平均配送距離_km=('距離_km', 'mean'),
+            合計トンキロ=('トンキロ', 'sum')
+        ).reset_index().rename(columns={'担当会社': '会社', '営業所表示': '営業所区分'})
+        
+        st.dataframe(
+            off_sub_summary.style.format({
+                '合計配達重量_t': '{:,.2f}', '平均配送距離_km': '{:.2f}', '合計トンキロ': '{:,.2f}'
+            }),
+            use_container_width=True, hide_index=True
+        )
+    else:
+        st.info(f"案{selected_p} の割り当てデータがありません。")
