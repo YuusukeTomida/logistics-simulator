@@ -270,7 +270,16 @@ def compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_in
     
     return dist_j, tk_j, dist_t, tk_t
 
-# 初期データ生成関数（案1〜案4用のディープコピー初期データフレーム生成）
+# ② J社色ベース＋T社色斜線（ストライプ）描画用ヘルパー関数
+def fill_hatched_region(canvas_rgb, region_mask, fill_rgb_j, fill_rgb_t, stripe_spacing=12, stripe_thickness=4):
+    canvas_rgb[region_mask == 255] = fill_rgb_j
+    h, w, _ = canvas_rgb.shape
+    y_coords, x_coords = np.ogrid[:h, :w]
+    stripe_mask = ((x_coords + y_coords) % stripe_spacing < stripe_thickness)
+    hatch_pixels = (region_mask == 255) & stripe_mask
+    canvas_rgb[hatch_pixels] = fill_rgb_t
+
+# 初期データ生成関数（全パターン用完全に独立したディープコピー初期データフレーム生成）
 def build_initial_scenario_df(office_info_dict):
     rows = []
     for i in range(len(df_j)):
@@ -295,7 +304,7 @@ def build_initial_scenario_df(office_info_dict):
         })
     return pd.DataFrame(rows)
 
-# ② 受持選択（編集）用 4つの複製パターン（案1〜案4）の独立したディープコピー初期化
+# 受持選択（編集）用 4つの複製パターン（案1〜案4）の独立したディープコピー初期化
 for p_idx in [1, 2, 3, 4]:
     key_name = f"table_data_p{p_idx}"
     if key_name not in st.session_state:
@@ -444,14 +453,13 @@ for p_idx in [1, 2, 3, 4]:
             wt_j_t = wt_j_kg / 1000.0
             wt_t_t = wt_t_kg / 1000.0
             
-            indiv_selected = []
-            if j_indiv_off != '-': indiv_selected.append('J社')
-            if t_indiv_off != '-': indiv_selected.append('T社')
-            
             p_map_dict[city_name] = {
                 '一括担当': bulk_comp,
                 '一括営業所': bulk_off if bulk_off != '-' else (j_indiv_off if bulk_comp == 'J社' and j_indiv_off != '-' else (t_indiv_off if bulk_comp == 'T社' and t_indiv_off != '-' else orig['_j_def_off'] if bulk_comp == 'J社' else orig['_t_def_off'])),
-                '個別選択': indiv_selected
+                'j_indiv_off': j_indiv_off,
+                't_indiv_off': t_indiv_off,
+                'orig_j_def': orig['_j_def_off'],
+                'orig_t_def': orig['_t_def_off']
             }
             
             has_indiv = (j_indiv_off != '-') or (t_indiv_off != '-')
@@ -537,20 +545,49 @@ for p_idx in [1, 2, 3, 4]:
             bg_protection_mask = np.zeros((h + 2, w + 2), np.uint8)
             cv2.floodFill(canvas_rgb.copy(), bg_protection_mask, (0, 0), (255, 255, 255), (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
 
+            DEFAULT_RED = (239, 68, 68)
+            DEFAULT_BLUE = (59, 130, 246)
+
             for c_name, (sx, sy) in CITY_SEEDS.items():
-                info = p_map_dict.get(c_name, {'一括担当': 'なし', '一括営業所': '-', '個別選択': []})
+                info = p_map_dict.get(c_name, {'一括担当': 'なし', '一括営業所': '-', 'j_indiv_off': '-', 't_indiv_off': '-', 'orig_j_def': '大阪', 'orig_t_def': '大阪中央'})
                 bulk = info['一括担当']
                 bulk_off = info['一括営業所']
-                indivs = info['個別選択']
+                j_indiv_off = info.get('j_indiv_off', '-')
+                t_indiv_off = info.get('t_indiv_off', '-')
+                orig_j_def = info.get('orig_j_def', '大阪')
+                orig_t_def = info.get('orig_t_def', '大阪中央')
                 
+                # ② 一括担当「なし」のときにJ社営業所色ベース＋T社営業所色斜線（ストライプ）表示にするロジック
+                fill_mode = 'solid'
+                fill_rgb = (255, 255, 255)
+                hatch_rgb = None
+
                 if bulk == 'J社' and bulk_off in j_color_map_p:
+                    fill_mode = 'solid'
                     fill_rgb = j_color_map_p[bulk_off]
                 elif bulk == 'T社' and bulk_off in t_color_map_p:
+                    fill_mode = 'solid'
                     fill_rgb = t_color_map_p[bulk_off]
-                elif bulk == 'なし' and len(indivs) > 0:
-                    fill_rgb = (200, 200, 200)
-                else:
-                    fill_rgb = (255, 255, 255)
+                elif bulk in ['なし', '-']:
+                    has_j = (j_indiv_off != '-')
+                    has_t = (t_indiv_off != '-')
+                    
+                    col_j = j_color_map_p.get(j_indiv_off if j_indiv_off != '-' else orig_j_def, DEFAULT_RED)
+                    col_t = t_color_map_p.get(t_indiv_off if t_indiv_off != '-' else orig_t_def, DEFAULT_BLUE)
+                    
+                    if has_j and has_t:
+                        fill_mode = 'hatched'
+                        fill_rgb = col_j   # J社ベース色
+                        hatch_rgb = col_t  # T社斜線色
+                    elif has_j:
+                        fill_mode = 'solid'
+                        fill_rgb = col_j
+                    elif has_t:
+                        fill_mode = 'solid'
+                        fill_rgb = col_t
+                    else:
+                        fill_mode = 'solid'
+                        fill_rgb = (255, 255, 255)
 
                 target_coords = [(sx, sy)]
                 if c_name in EXTRA_SEEDS:
@@ -573,7 +610,14 @@ for p_idx in [1, 2, 3, 4]:
 
                         if line_bin_dilated[cs_y, cs_x] == 0:
                             m_curr = bg_protection_mask.copy()
-                            cv2.floodFill(canvas_rgb, m_curr, (cs_x, cs_y), fill_rgb, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
+                            if fill_mode == 'solid':
+                                cv2.floodFill(canvas_rgb, m_curr, (cs_x, cs_y), fill_rgb, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
+                            elif fill_mode == 'hatched':
+                                # 領域マスク取得
+                                region_mask = np.zeros((h, w), dtype=np.uint8)
+                                cv2.floodFill(region_mask, m_curr, (cs_x, cs_y), 255, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
+                                # ② J社色ベース＋T社色斜線パターン描画
+                                fill_hatched_region(canvas_rgb, region_mask, fill_rgb, hatch_rgb, stripe_spacing=14, stripe_thickness=4)
 
             canvas_rgb[line_bin_dilated == 255] = (0, 0, 0)
 
@@ -592,7 +636,7 @@ for p_idx in [1, 2, 3, 4]:
             else:
                 cropped_img = canvas_rgb
 
-            pattern_map_images[p_idx] = cropped_img # 画像キャッシュ保存
+            pattern_map_images[p_idx] = cropped_img
 
             map_col1, map_col2, map_col3 = st.columns([1, 4, 1])
             with map_col2:
@@ -603,7 +647,7 @@ with tabs[0]:
     st.subheader("📈 会社毎の「現状」vs「4つの変更案（案1〜案4）」一括比較サマリー")
     st.caption("全4パターンの変更案でのトンキロ、配達重量、削減率を一覧で一括比較します。")
 
-    # ② 現状基準データフレーム（初期状態テーブル）
+    # 現状基準データフレーム（同一算出基準）
     base_0_df = st.session_state["table_data_p1"]
     
     cur_j_wt_total = base_0_df['J社 配達重量(kg)'].sum() / 1000.0
@@ -616,6 +660,7 @@ with tabs[0]:
         {'パターン': '現状（基本）', '会社': 'T社', '担当自治体数': len(base_0_df), '配達重量_t': round(cur_t_wt_total, 2), 'トンキロ': round(cur_t_tk_total, 2), 'トンキロ削減量': 0.0, '削減率(%)': 0.0}
     ]
 
+    # 案1〜案4の集計処理（リアルタイムデータとの事前一括同期）
     for p_idx in [1, 2, 3, 4]:
         p_df = st.session_state[f"table_data_p{p_idx}"]
         
@@ -661,10 +706,9 @@ with tabs[0]:
 
     summary_df = pd.DataFrame(summary_rows)
 
-    # 全体サマリーへの一括Excel出力ボタンの設置（①出力セル位置修正: 案1=B2/B3, 案2=K2/K3, 案3=T2/T3, 案4=AC2/AC3）
+    # 全体サマリーへの一括Excel出力ボタン（①正確なセル配置: 案1=B2/B3, 案2=K2/K3, 案3=T2/T3, 案4=AC2/AC3）
     excel_full_bytes = io.BytesIO()
     with pd.ExcelWriter(excel_full_bytes, engine='openpyxl') as writer:
-        # シート1「新規営業所一覧」: 案1〜4で登録されている営業所内容を併記
         all_cust_rows = []
         for p_i in [1, 2, 3, 4]:
             p_custs = st.session_state[f"custom_offices_p{p_i}"]
@@ -681,26 +725,19 @@ with tabs[0]:
             df_cust_all = pd.DataFrame(columns=['対象パターン', '担当会社', '新規営業所名', '所在地住所'])
         df_cust_all.to_excel(writer, sheet_name='新規営業所一覧', index=False)
 
-        # シート2〜5「案1」「案2」「案3」「案4」を別シートで出力
         for p_i in [1, 2, 3, 4]:
             p_df_export = st.session_state[f"table_data_p{p_i}"][display_cols].copy()
             p_df_export.to_excel(writer, sheet_name=f'案{p_i}', index=False)
 
-        # シート6「白地図エリアマップ」を作成し、案1〜4の白地図画像（PNG）を指示通り精密配置（①修正箇所）
         wb = writer.book
         ws_map = wb.create_sheet(title="白地図エリアマップ")
         ws_map['A1'] = "🗺️ 大阪府 市区町村別受持選択 白地図エリアマップ（案1〜案4 比較一覧）"
         
-        # ① ご指定通りの配置セル位置マッピング
-        # 案1: B2タイトル, B3画像
-        # 案2: K2タイトル, K3画像
-        # 案3: T2タイトル, T3画像
-        # 案4: AC2タイトル, AC3画像
         map_cell_positions = {
-            1: ('B', 2, 3),   # 案1
-            2: ('K', 2, 3),   # 案2
-            3: ('T', 2, 3),   # 案3
-            4: ('AC', 2, 3)   # 案4
+            1: ('B', 2, 3),   # 案1: B2, B3
+            2: ('K', 2, 3),   # 案2: K2, K3
+            3: ('T', 2, 3),   # 案3: T2, T3
+            4: ('AC', 2, 3)   # 案4: AC2, AC3
         }
         
         for p_i in [1, 2, 3, 4]:
@@ -718,7 +755,6 @@ with tabs[0]:
                     xl_img.height = 520
                     ws_map.add_image(xl_img, f"{col_let}{img_row}")
 
-        # 列幅設定（画像同士の重なりを完全解消）
         for col_idx in range(1, 35):
             col_letter = openpyxl.utils.get_column_letter(col_idx)
             ws_map.column_dimensions[col_letter].width = 6.0
