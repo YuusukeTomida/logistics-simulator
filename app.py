@@ -177,7 +177,7 @@ def calc_haversine_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return round(R * c * 1.2, 1)
 
-# ① 新規営業所の登録状態をパターン別に完全分離管理（custom_offices_p1 〜 custom_offices_p4）
+# 新規営業所の登録状態をパターン別に完全分離管理（custom_offices_p1 〜 custom_offices_p4）
 for p_idx in [1, 2, 3, 4]:
     key_name = f"custom_offices_p{p_idx}"
     if key_name not in st.session_state:
@@ -270,7 +270,7 @@ def compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_in
     
     return dist_j, tk_j, dist_t, tk_t
 
-# 初期データ生成関数（案1〜案4用）
+# 初期データ生成関数（案1〜案4用共通関数）
 def build_initial_scenario_df(office_info_dict):
     rows = []
     for i in range(len(df_j)):
@@ -295,7 +295,7 @@ def build_initial_scenario_df(office_info_dict):
         })
     return pd.DataFrame(rows)
 
-# ② 受持選択（編集）用 4つの複製パターン（案1〜案4）のセッション状態初期化
+# ② 受持選択（編集）用 4つの複製パターン（案1〜案4）のセッション状態完全初期化
 for p_idx in [1, 2, 3, 4]:
     key_name = f"table_data_p{p_idx}"
     if key_name not in st.session_state:
@@ -314,7 +314,7 @@ tabs = st.tabs(tab_names)
 
 pattern_active_records = {1: [], 2: [], 3: [], 4: []}
 pattern_map_status = {1: {}, 2: {}, 3: {}, 4: {}}
-pattern_map_images = {1: None, 2: None, 3: None, 4: None} # ⑦ エクセル画像埋め込み用マップキャッシュ
+pattern_map_images = {1: None, 2: None, 3: None, 4: None} # 白地図画像保持
 
 display_cols = [
     '市町村コード', '市町村名', '配達方式', '市町村一括担当', '市町村一括担当営業所',
@@ -340,7 +340,7 @@ for p_idx in [1, 2, 3, 4]:
         for cust in p_custom_offices:
             p_office_info[(cust['company'], cust['name'])] = {'address': cust['address'], 'coords': cust['coords']}
         
-        # ① 案1〜案4それぞれのタブで独立した新規営業所登録フォーム
+        # 案1〜案4それぞれのタブで独立した新規営業所登録フォーム
         st.markdown(f"##### ➕ 案{p_idx} 専用 新規営業所の登録（J社 / T社）")
         col_add_j, col_add_t = st.columns(2)
         with col_add_j:
@@ -373,7 +373,6 @@ for p_idx in [1, 2, 3, 4]:
         # ③ 案1〜4個別タブからの個別出力ボタンは削除（全体サマリーに一括集約）
         recalc_clicked = st.button(f"🔄 案{p_idx} の配達支店変更を反映", type="primary", key=f"btn_recalc_p{p_idx}", use_container_width=True)
 
-        # ② 当該案の既存・新規営業所リスト（j_offices_p, t_offices_p, all_offices_p）を選択肢にセット
         edited_p_df = st.data_editor(
             curr_p_df[display_cols],
             column_config={
@@ -692,26 +691,38 @@ with tabs[0]:
             p_df_export = st.session_state[f"table_data_p{p_i}"][display_cols].copy()
             p_df_export.to_excel(writer, sheet_name=f'案{p_i}', index=False)
 
-        # ⑦ シート6「白地図エリアマップ」を作成し、案1〜4の白地図画像（PNG）を併記出力
+        # ⑦ シート6「白地図エリアマップ」を作成し、案1〜4の白地図画像（PNG）を重ならず指定セルに精密配置出力
         wb = writer.book
         ws_map = wb.create_sheet(title="白地図エリアマップ")
         ws_map['A1'] = "🗺️ 大阪府 市区町村別受持選択 白地図エリアマップ（案1〜案4 比較一覧）"
         
+        # ① 案1: B2/B3, 案2: J2/J3, 案3: Q2/Q3, 案4: X2/X3 の正確なセル配置マッピング
+        map_cell_positions = {
+            1: ('B', 2, 3), # B2タイトル, B3画像左上端
+            2: ('J', 2, 3), # J2タイトル, J3画像左上端
+            3: ('Q', 2, 3), # Q2タイトル, Q3画像左上端
+            4: ('X', 2, 3)  # X2タイトル, X3画像左上端
+        }
+        
         for p_i in [1, 2, 3, 4]:
+            col_let, t_row, img_row = map_cell_positions[p_i]
+            ws_map[f"{col_let}{t_row}"] = f"■ 案{p_i} マップ"
+            
             m_img = pattern_map_images[p_i]
             if m_img is not None:
-                # OpenPyxl画像埋め込み用にPNGエンコード
                 b_rgb = cv2.cvtColor(m_img, cv2.COLOR_RGB2BGR)
                 is_ok, buffer = cv2.imencode(".png", b_rgb)
                 if is_ok:
                     img_stream = io.BytesIO(buffer)
                     xl_img = OpenPyxlImage(img_stream)
-                    xl_img.width = 400
-                    xl_img.height = 547
-                    # 横方向にセルを並べて配置（B3, G3, L3, Q3）
-                    col_letter = openpyxl.utils.get_column_letter(2 + (p_i - 1) * 5)
-                    ws_map[f"{col_letter}2"] = f"■ 案{p_i} マップ"
-                    ws_map.add_image(xl_img, f"{col_letter}3")
+                    xl_img.width = 380
+                    xl_img.height = 520
+                    ws_map.add_image(xl_img, f"{col_let}{img_row}")
+
+        # エクセル列幅の調整（画像同士の重なりを完全防止）
+        for col_idx in range(1, 32):
+            col_letter = openpyxl.utils.get_column_letter(col_idx)
+            ws_map.column_dimensions[col_letter].width = 6.5
 
     st.download_button(
         label="📥 全体シミュレーション＆4案一括データ（白地図・新規営業所併記）Excel出力",
