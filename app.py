@@ -5,6 +5,8 @@ import cv2
 import os
 import math
 import io
+import openpyxl
+from openpyxl.drawing.image import Image as OpenPyxlImage
 
 # 1. ページ基本設定
 st.set_page_config(
@@ -297,10 +299,9 @@ def build_initial_scenario_df(office_info_dict):
 for p_idx in [1, 2, 3, 4]:
     key_name = f"table_data_p{p_idx}"
     if key_name not in st.session_state:
-        # 初期はEXISTING_OFFICES_INFO基準で作成
         st.session_state[key_name] = build_initial_scenario_df(EXISTING_OFFICES_INFO)
 
-# 5. タブUI構成（現状比較サマリー、会社別・営業所別集計、案1〜案4受持選択）
+# 5. タブUI構成
 tab_names = [
     "📊 全体サマリー＆現状比較",
     "🏢 会社別・営業所別集計",
@@ -313,6 +314,7 @@ tabs = st.tabs(tab_names)
 
 pattern_active_records = {1: [], 2: [], 3: [], 4: []}
 pattern_map_status = {1: {}, 2: {}, 3: {}, 4: {}}
+pattern_map_images = {1: None, 2: None, 3: None, 4: None} # ⑦ エクセル画像埋め込み用マップキャッシュ
 
 display_cols = [
     '市町村コード', '市町村名', '配達方式', '市町村一括担当', '市町村一括担当営業所',
@@ -321,7 +323,7 @@ display_cols = [
     'T社 距離(km)', 'T社 配達重量(kg)', 'T社 トンキロ(t・km)'
 ]
 
-# タブ3〜6: 案1〜案4 個別編集画面処理（①案1〜4で新規営業所登録を完全独立化）
+# タブ3〜6: 案1〜案4 個別編集画面処理
 for p_idx in [1, 2, 3, 4]:
     tab_obj = tabs[p_idx + 1] # 0:サマリー, 1:会社営業所集計, 2:案1, 3:案2, 4:案3, 5:案4
     with tab_obj:
@@ -368,30 +370,8 @@ for p_idx in [1, 2, 3, 4]:
 
         curr_p_df = st.session_state[f"table_data_p{p_idx}"]
         
-        col_btn1, col_btn2 = st.columns([2, 3])
-        with col_btn1:
-            recalc_clicked = st.button(f"🔄 案{p_idx} の配達支店変更を反映", type="primary", key=f"btn_recalc_p{p_idx}", use_container_width=True)
-            
-        with col_btn2:
-            excel_output_bytes = io.BytesIO()
-            with pd.ExcelWriter(excel_output_bytes, engine='openpyxl') as writer:
-                if p_custom_offices:
-                    df_cust_export = pd.DataFrame(p_custom_offices)[['company', 'name', 'address']].rename(columns={
-                        'company': '担当会社', 'name': '新規営業所名', 'address': '所在地住所'
-                    })
-                else:
-                    df_cust_export = pd.DataFrame(columns=['担当会社', '新規営業所名', '所在地住所'])
-                df_cust_export.to_excel(writer, sheet_name='新規営業所一覧', index=False)
-                curr_p_df[display_cols].to_excel(writer, sheet_name=f'案{p_idx}_受持選択', index=False)
-
-            st.download_button(
-                label=f"📥 案{p_idx} のデータをExcel出力",
-                data=excel_output_bytes.getvalue(),
-                file_name=f"配達エリアシミュレーション_案{p_idx}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key=f"btn_dl_p{p_idx}",
-                use_container_width=True
-            )
+        # ③ 案1〜4個別タブからの個別出力ボタンは削除（全体サマリーに一括集約）
+        recalc_clicked = st.button(f"🔄 案{p_idx} の配達支店変更を反映", type="primary", key=f"btn_recalc_p{p_idx}", use_container_width=True)
 
         # ② 当該案の既存・新規営業所リスト（j_offices_p, t_offices_p, all_offices_p）を選択肢にセット
         edited_p_df = st.data_editor(
@@ -415,7 +395,6 @@ for p_idx in [1, 2, 3, 4]:
             key=f"main_editor_p{p_idx}"
         )
 
-        # ③ パターン固有の営業所位置情報（p_office_info）を用いて距離・トンキロを精密計算
         if recalc_clicked:
             for idx in range(len(edited_p_df)):
                 r = edited_p_df.iloc[idx]
@@ -518,7 +497,7 @@ for p_idx in [1, 2, 3, 4]:
         st.markdown("---")
         st.subheader(f"🗺️ 案{p_idx} 白地図エリアマップ")
         
-        # ④ カラー凡例のカラーブロックアイコンの大きさを3倍程度（48px）に拡大
+        # カラー凡例のカラーブロックアイコン（拡大）
         st.markdown("##### 📌 営業所別 カラー凡例（拡大カラーブロック表示）")
         leg_cols = st.columns(2)
         with leg_cols[0]:
@@ -598,14 +577,7 @@ for p_idx in [1, 2, 3, 4]:
                             m_curr = bg_protection_mask.copy()
                             cv2.floodFill(canvas_rgb, m_curr, (cs_x, cs_y), fill_rgb, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
                         
-                # ② 一括担当が「なし」の場合は地図上の赤・青の丸印（◯）を描画しない（bulk != 'なし' のときのみ描画）
-                if bulk != 'なし' and 0 <= sx < w and 0 <= sy < h and len(indivs) > 0:
-                    DEFAULT_RGB = {'J社': (239, 68, 68), 'T社': (59, 130, 246)}
-                    for d_idx, comp_indiv in enumerate(indivs):
-                        dot_rgb = DEFAULT_RGB.get(comp_indiv, (0, 0, 0))
-                        dot_x = sx + (d_idx - (len(indivs)-1)/2.0) * 16
-                        cv2.circle(canvas_rgb, (int(dot_x), sy), 7, (255, 255, 255), -1)
-                        cv2.circle(canvas_rgb, (int(dot_x), sy), 6, dot_rgb, -1)
+                # ② 「市町村一括担当」選択時の赤・青丸印（〇）を完全削除（描画しない）
 
             canvas_rgb[line_bin_dilated == 255] = (0, 0, 0)
 
@@ -624,55 +596,133 @@ for p_idx in [1, 2, 3, 4]:
             else:
                 cropped_img = canvas_rgb
 
+            pattern_map_images[p_idx] = cropped_img # 画像キャッシュ保存（⑦エクセル併記用）
+
             map_col1, map_col2, map_col3 = st.columns([1, 4, 1])
             with map_col2:
                 st.image(cropped_img, width=600)
 
-# タブ1: 全体サマリー ＆ 現状 vs 4つの変更案比較
+# タブ1: 全体サマリー ＆ 現状 vs 4つの変更案比較（④出力ボタン配置 ＆ ⑤〜⑦詳細Excel出力対応）
 with tabs[0]:
     st.subheader("📈 会社毎の「現状」vs「4つの変更案（案1〜案4）」一括比較サマリー")
     st.caption("全4パターンの変更案でのトンキロ、配達重量、削減率を一覧で一括比較します。")
-    
+
+    # ① サマリー計算用の集計処理（リクエスト①指定ルール完全適用）
     base_0_df = st.session_state["table_data_p1"]
     
-    cur_j_wt = base_0_df['J社 配達重量(kg)'].sum() / 1000.0
-    cur_t_wt = base_0_df['T社 配達重量(kg)'].sum() / 1000.0
-    cur_j_tk = base_0_df['J社 トンキロ(t・km)'].sum()
-    cur_t_tk = base_0_df['T社 トンキロ(t・km)'].sum()
-    
-    summary_rows = []
-    
-    summary_rows.append({'パターン': '現状（基本）', '会社': 'J社', '担当自治体数': len(base_0_df), '配達重量_t': cur_j_wt, 'トンキロ': cur_j_tk, 'トンキロ削減量': 0.0, '削減率(%)': 0.0})
-    summary_rows.append({'パターン': '現状（基本）', '会社': 'T社', '担当自治体数': len(base_0_df), '配達重量_t': cur_t_wt, 'トンキロ': cur_t_tk, 'トンキロ削減量': 0.0, '削減率(%)': 0.0})
-    
+    # 現行の基準集計
+    cur_j_wt_total = base_0_df['J社 配達重量(kg)'].sum() / 1000.0
+    cur_t_wt_total = base_0_df['T社 配達重量(kg)'].sum() / 1000.0
+    cur_j_tk_total = base_0_df['J社 トンキロ(t・km)'].sum()
+    cur_t_tk_total = base_0_df['T社 トンキロ(t・km)'].sum()
+
+    summary_rows = [
+        {'パターン': '現状（基本）', '会社': 'J社', '担当自治体数': len(base_0_df), '配達重量_t': round(cur_j_wt_total, 2), 'トンキロ': round(cur_j_tk_total, 2), 'トンキロ削減量': 0.0, '削減率(%)': 0.0},
+        {'パターン': '現状（基本）', '会社': 'T社', '担当自治体数': len(base_0_df), '配達重量_t': round(cur_t_wt_total, 2), 'トンキロ': round(cur_t_tk_total, 2), 'トンキロ削減量': 0.0, '削減率(%)': 0.0}
+    ]
+
     for p_idx in [1, 2, 3, 4]:
-        p_act = pattern_active_records[p_idx]
-        p_act_df = pd.DataFrame(p_act) if len(p_act) > 0 else pd.DataFrame()
+        p_df = st.session_state[f"table_data_p{p_idx}"]
         
-        for c_name, c_base_wt, c_base_tk in [('J社', cur_j_wt, cur_j_tk), ('T社', cur_t_wt, cur_t_tk)]:
-            if not p_act_df.empty and '担当会社' in p_act_df.columns:
-                sub_c = p_act_df[p_act_df['担当会社'] == c_name]
-                p_cnt = len(sub_c)
-                p_wt = sub_c['重量_t'].sum()
-                p_tk = sub_c['トンキロ'].sum()
-            else:
-                p_cnt = 0; p_wt = 0.0; p_tk = 0.0
-                
-            diff_tk = c_base_tk - p_tk
-            red_pct = round((diff_tk / c_base_tk * 100), 1) if c_base_tk > 0 else 0.0
+        j_tk_sum = 0.0; t_tk_sum = 0.0
+        j_wt_sum = 0.0; t_wt_sum = 0.0
+        j_cnt = 0; t_cnt = 0
+        
+        for _, r in p_df.iterrows():
+            bulk = str(r['市町村一括担当']).strip()
+            j_tk = float(r['J社 トンキロ(t・km)'])
+            t_tk = float(r['T社 トンキロ(t・km)'])
+            j_wt = float(r['J社 配達重量(kg)']) / 1000.0
+            t_wt = float(r['T社 配達重量(kg)']) / 1000.0
             
-            summary_rows.append({
-                'パターン': f'案{p_idx}',
-                '会社': c_name,
-                '担当自治体数': p_cnt,
-                '配達重量_t': p_wt,
-                'トンキロ': p_tk,
-                'トンキロ削減量': diff_tk,
-                '削減率(%)': red_pct
-            })
-            
+            # ① 集計ルール適用
+            if bulk == 'J社':
+                j_tk_sum += (j_tk + t_tk)
+                j_wt_sum += (j_wt + t_wt)
+                j_cnt += 1
+            elif bulk == 'T社':
+                t_tk_sum += (j_tk + t_tk)
+                t_wt_sum += (j_wt + t_wt)
+                t_cnt += 1
+            else: # 'なし' または '-'
+                j_tk_sum += j_tk
+                j_wt_sum += j_wt
+                if j_tk > 0 or str(r['J社個別']).strip() != '-':
+                    j_cnt += 1
+                    
+                t_tk_sum += t_tk
+                t_wt_sum += t_wt
+                if t_tk > 0 or str(r['T社個別']).strip() != '-':
+                    t_cnt += 1
+
+        # J社 削減計算
+        j_diff = cur_j_tk_total - j_tk_sum
+        j_pct = round((j_diff / cur_j_tk_total * 100), 1) if cur_j_tk_total > 0 else 0.0
+        summary_rows.append({'パターン': f'案{p_idx}', '会社': 'J社', '担当自治体数': j_cnt, '配達重量_t': round(j_wt_sum, 2), 'トンキロ': round(j_tk_sum, 2), 'トンキロ削減量': round(j_diff, 2), '削減率(%)': j_pct})
+
+        # T社 削減計算
+        t_diff = cur_t_tk_total - t_tk_sum
+        t_pct = round((t_diff / cur_t_tk_total * 100), 1) if cur_t_tk_total > 0 else 0.0
+        summary_rows.append({'パターン': f'案{p_idx}', '会社': 'T社', '担当自治体数': t_cnt, '配達重量_t': round(t_wt_sum, 2), 'トンキロ': round(t_tk_sum, 2), 'トンキロ削減量': round(t_diff, 2), '削減率(%)': t_pct})
+
     summary_df = pd.DataFrame(summary_rows)
-    
+
+    # ④ 全体サマリーへの一括Excel出力ボタンの設置（⑤新規営業所併記、⑥案1〜4個別シート、⑦白地図エリアマップ画像併記）
+    excel_full_bytes = io.BytesIO()
+    with pd.ExcelWriter(excel_full_bytes, engine='openpyxl') as writer:
+        # ⑤ シート1「新規営業所一覧」: 案1〜4で登録されている営業所内容を併記
+        all_cust_rows = []
+        for p_i in [1, 2, 3, 4]:
+            p_custs = st.session_state[f"custom_offices_p{p_i}"]
+            for c_item in p_custs:
+                all_cust_rows.append({
+                    '対象パターン': f'案{p_i}',
+                    '担当会社': c_item['company'],
+                    '新規営業所名': c_item['name'],
+                    '所在地住所': c_item['address']
+                })
+        if all_cust_rows:
+            df_cust_all = pd.DataFrame(all_cust_rows)
+        else:
+            df_cust_all = pd.DataFrame(columns=['対象パターン', '担当会社', '新規営業所名', '所在地住所'])
+        df_cust_all.to_excel(writer, sheet_name='新規営業所一覧', index=False)
+
+        # ⑥ シート2〜5「案1」「案2」「案3」「案4」を別シートで出力
+        for p_i in [1, 2, 3, 4]:
+            p_df_export = st.session_state[f"table_data_p{p_i}"][display_cols].copy()
+            p_df_export.to_excel(writer, sheet_name=f'案{p_i}', index=False)
+
+        # ⑦ シート6「白地図エリアマップ」を作成し、案1〜4の白地図画像（PNG）を併記出力
+        wb = writer.book
+        ws_map = wb.create_sheet(title="白地図エリアマップ")
+        ws_map['A1'] = "🗺️ 大阪府 市区町村別受持選択 白地図エリアマップ（案1〜案4 比較一覧）"
+        
+        for p_i in [1, 2, 3, 4]:
+            m_img = pattern_map_images[p_i]
+            if m_img is not None:
+                # OpenPyxl画像埋め込み用にPNGエンコード
+                b_rgb = cv2.cvtColor(m_img, cv2.COLOR_RGB2BGR)
+                is_ok, buffer = cv2.imencode(".png", b_rgb)
+                if is_ok:
+                    img_stream = io.BytesIO(buffer)
+                    xl_img = OpenPyxlImage(img_stream)
+                    xl_img.width = 400
+                    xl_img.height = 547
+                    # 横方向にセルを並べて配置（B3, G3, L3, Q3）
+                    col_letter = openpyxl.utils.get_column_letter(2 + (p_i - 1) * 5)
+                    ws_map[f"{col_letter}2"] = f"■ 案{p_i} マップ"
+                    ws_map.add_image(xl_img, f"{col_letter}3")
+
+    st.download_button(
+        label="📥 全体シミュレーション＆4案一括データ（白地図・新規営業所併記）Excel出力",
+        data=excel_full_bytes.getvalue(),
+        file_name="大阪府配達エリア最適化シミュレーション_全体比較結果.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        type="primary"
+    )
+
+    st.markdown("---")
     st.markdown("### 🏢 J社：現状 vs 4案の比較")
     cols_j = st.columns(5)
     j_sum = summary_df[summary_df['会社'] == 'J社']
