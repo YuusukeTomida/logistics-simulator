@@ -270,15 +270,6 @@ def compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_in
     
     return dist_j, tk_j, dist_t, tk_t
 
-# ② J社色ベース＋T社色斜線（ストライプ）描画用ヘルパー関数
-def fill_hatched_region(canvas_rgb, region_mask, fill_rgb_j, fill_rgb_t, stripe_spacing=12, stripe_thickness=4):
-    canvas_rgb[region_mask == 255] = fill_rgb_j
-    h, w, _ = canvas_rgb.shape
-    y_coords, x_coords = np.ogrid[:h, :w]
-    stripe_mask = ((x_coords + y_coords) % stripe_spacing < stripe_thickness)
-    hatch_pixels = (region_mask == 255) & stripe_mask
-    canvas_rgb[hatch_pixels] = fill_rgb_t
-
 # 初期データ生成関数（全パターン用完全に独立したディープコピー初期データフレーム生成）
 def build_initial_scenario_df(office_info_dict):
     rows = []
@@ -429,7 +420,7 @@ for p_idx in [1, 2, 3, 4]:
             st.success(f"案{p_idx} の距離およびトンキロを最新表示に再計算しました！")
             st.rerun()
 
-        # 集計＆マップ保持
+        # 集計＆マップ保持（全案の最新データの編集内容を確実に同期反映）
         p_active = []
         p_map_dict = {}
         for idx, r in edited_p_df.iterrows():
@@ -443,15 +434,31 @@ for p_idx in [1, 2, 3, 4]:
             j_indiv_off = r['J社個別']
             t_indiv_off = r['T社個別']
             
-            dist_j = r['J社 距離(km)']
-            dist_t = r['T社 距離(km)']
-            tk_j = r['J社 トンキロ(t・km)']
-            tk_t = r['T社 トンキロ(t・km)']
+            # 最新演算距離・トンキロ（即時同期待避）
+            dj_now, tkj_now, dt_now, tkt_now = compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_indiv_off, orig['J社 配達重量(kg)'], orig['T社 配達重量(kg)'], p_office_info, MUNICIPAL_HALL_COORDS)
+            
+            curr_p_df.at[idx, '市町村一括担当'] = bulk_comp
+            curr_p_df.at[idx, '市町村一括担当営業所'] = bulk_off
+            curr_p_df.at[idx, 'J社個別'] = j_indiv_off
+            curr_p_df.at[idx, 'T社個別'] = t_indiv_off
+            curr_p_df.at[idx, 'J社 距離(km)'] = dj_now
+            curr_p_df.at[idx, 'J社 トンキロ(t・km)'] = tkj_now
+            curr_p_df.at[idx, 'T社 距離(km)'] = dt_now
+            curr_p_df.at[idx, 'T社 トンキロ(t・km)'] = tkt_now
+
+            dist_j = dj_now
+            dist_t = dt_now
+            tk_j = tkj_now
+            tk_t = tkt_now
             
             wt_j_kg = orig['J社 配達重量(kg)']
             wt_t_kg = orig['T社 配達重量(kg)']
             wt_j_t = wt_j_kg / 1000.0
             wt_t_t = wt_t_kg / 1000.0
+            
+            indiv_selected = []
+            if j_indiv_off != '-': indiv_selected.append('J社')
+            if t_indiv_off != '-': indiv_selected.append('T社')
             
             p_map_dict[city_name] = {
                 '一括担当': bulk_comp,
@@ -497,6 +504,7 @@ for p_idx in [1, 2, 3, 4]:
                         '重量_t': total_wt, '距離_km': avg_dist, 'トンキロ': total_tk,
                     })
 
+        st.session_state[f"table_data_p{p_idx}"] = curr_p_df
         pattern_active_records[p_idx] = p_active
         pattern_map_status[p_idx] = p_map_dict
 
@@ -545,49 +553,22 @@ for p_idx in [1, 2, 3, 4]:
             bg_protection_mask = np.zeros((h + 2, w + 2), np.uint8)
             cv2.floodFill(canvas_rgb.copy(), bg_protection_mask, (0, 0), (255, 255, 255), (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
 
-            DEFAULT_RED = (239, 68, 68)
-            DEFAULT_BLUE = (59, 130, 246)
-
             for c_name, (sx, sy) in CITY_SEEDS.items():
-                info = p_map_dict.get(c_name, {'一括担当': 'なし', '一括営業所': '-', 'j_indiv_off': '-', 't_indiv_off': '-', 'orig_j_def': '大阪', 'orig_t_def': '大阪中央'})
+                info = p_map_dict.get(c_name, {'一括担当': 'なし', '一括営業所': '-', 'j_indiv_off': '-', 't_indiv_off': '-'})
                 bulk = info['一括担当']
                 bulk_off = info['一括営業所']
                 j_indiv_off = info.get('j_indiv_off', '-')
                 t_indiv_off = info.get('t_indiv_off', '-')
-                orig_j_def = info.get('orig_j_def', '大阪')
-                orig_t_def = info.get('orig_t_def', '大阪中央')
                 
-                # ② 一括担当「なし」のときにJ社営業所色ベース＋T社営業所色斜線（ストライプ）表示にするロジック
-                fill_mode = 'solid'
-                fill_rgb = (255, 255, 255)
-                hatch_rgb = None
-
+                # ② 地図色塗りルールの元に戻し処理（一括＝営業所色, 個別選択あり＝灰色, 未設定＝白色）
                 if bulk == 'J社' and bulk_off in j_color_map_p:
-                    fill_mode = 'solid'
                     fill_rgb = j_color_map_p[bulk_off]
                 elif bulk == 'T社' and bulk_off in t_color_map_p:
-                    fill_mode = 'solid'
                     fill_rgb = t_color_map_p[bulk_off]
-                elif bulk in ['なし', '-']:
-                    has_j = (j_indiv_off != '-')
-                    has_t = (t_indiv_off != '-')
-                    
-                    col_j = j_color_map_p.get(j_indiv_off if j_indiv_off != '-' else orig_j_def, DEFAULT_RED)
-                    col_t = t_color_map_p.get(t_indiv_off if t_indiv_off != '-' else orig_t_def, DEFAULT_BLUE)
-                    
-                    if has_j and has_t:
-                        fill_mode = 'hatched'
-                        fill_rgb = col_j   # J社ベース色
-                        hatch_rgb = col_t  # T社斜線色
-                    elif has_j:
-                        fill_mode = 'solid'
-                        fill_rgb = col_j
-                    elif has_t:
-                        fill_mode = 'solid'
-                        fill_rgb = col_t
-                    else:
-                        fill_mode = 'solid'
-                        fill_rgb = (255, 255, 255)
+                elif bulk in ['なし', '-'] and ((j_indiv_off != '-') or (t_indiv_off != '-')):
+                    fill_rgb = (200, 200, 200) # 個別選択時は灰色
+                else:
+                    fill_rgb = (255, 255, 255) # 未設定（一括なし＆個別なし）は白色
 
                 target_coords = [(sx, sy)]
                 if c_name in EXTRA_SEEDS:
@@ -610,14 +591,7 @@ for p_idx in [1, 2, 3, 4]:
 
                         if line_bin_dilated[cs_y, cs_x] == 0:
                             m_curr = bg_protection_mask.copy()
-                            if fill_mode == 'solid':
-                                cv2.floodFill(canvas_rgb, m_curr, (cs_x, cs_y), fill_rgb, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
-                            elif fill_mode == 'hatched':
-                                # 領域マスク取得
-                                region_mask = np.zeros((h, w), dtype=np.uint8)
-                                cv2.floodFill(region_mask, m_curr, (cs_x, cs_y), 255, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
-                                # ② J社色ベース＋T社色斜線パターン描画
-                                fill_hatched_region(canvas_rgb, region_mask, fill_rgb, hatch_rgb, stripe_spacing=14, stripe_thickness=4)
+                            cv2.floodFill(canvas_rgb, m_curr, (cs_x, cs_y), fill_rgb, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
 
             canvas_rgb[line_bin_dilated == 255] = (0, 0, 0)
 
@@ -647,8 +621,8 @@ with tabs[0]:
     st.subheader("📈 会社毎の「現状」vs「4つの変更案（案1〜案4）」一括比較サマリー")
     st.caption("全4パターンの変更案でのトンキロ、配達重量、削減率を一覧で一括比較します。")
 
-    # 現状基準データフレーム（同一算出基準）
-    base_0_df = st.session_state["table_data_p1"]
+    # ① 現状基準データフレーム（同一算出基準による初期集計）
+    base_0_df = build_initial_scenario_df(EXISTING_OFFICES_INFO)
     
     cur_j_wt_total = base_0_df['J社 配達重量(kg)'].sum() / 1000.0
     cur_t_wt_total = base_0_df['T社 配達重量(kg)'].sum() / 1000.0
@@ -660,7 +634,7 @@ with tabs[0]:
         {'パターン': '現状（基本）', '会社': 'T社', '担当自治体数': len(base_0_df), '配達重量_t': round(cur_t_wt_total, 2), 'トンキロ': round(cur_t_tk_total, 2), 'トンキロ削減量': 0.0, '削減率(%)': 0.0}
     ]
 
-    # 案1〜案4の集計処理（リアルタイムデータとの事前一括同期）
+    # ① 全案の最新リアルタイムデータからの完全同期集計（100%数値一致保証）
     for p_idx in [1, 2, 3, 4]:
         p_df = st.session_state[f"table_data_p{p_idx}"]
         
@@ -706,7 +680,7 @@ with tabs[0]:
 
     summary_df = pd.DataFrame(summary_rows)
 
-    # 全体サマリーへの一括Excel出力ボタン（①正確なセル配置: 案1=B2/B3, 案2=K2/K3, 案3=T2/T3, 案4=AC2/AC3）
+    # 全体サマリーへの一括Excel出力ボタン（ご指定通りの出力位置セルマッピング）
     excel_full_bytes = io.BytesIO()
     with pd.ExcelWriter(excel_full_bytes, engine='openpyxl') as writer:
         all_cust_rows = []
@@ -733,11 +707,13 @@ with tabs[0]:
         ws_map = wb.create_sheet(title="白地図エリアマップ")
         ws_map['A1'] = "🗺️ 大阪府 市区町村別受持選択 白地図エリアマップ（案1〜案4 比較一覧）"
         
+        # ご指定通りの配置セル位置マッピング
+        # 案1: B2/B3, 案2: K2/K3, 案3: T2/T3, 案4: AC2/AC3
         map_cell_positions = {
-            1: ('B', 2, 3),   # 案1: B2, B3
-            2: ('K', 2, 3),   # 案2: K2, K3
-            3: ('T', 2, 3),   # 案3: T2, T3
-            4: ('AC', 2, 3)   # 案4: AC2, AC3
+            1: ('B', 2, 3),   # 案1
+            2: ('K', 2, 3),   # 案2
+            3: ('T', 2, 3),   # 案3
+            4: ('AC', 2, 3)   # 案4
         }
         
         for p_i in [1, 2, 3, 4]:
@@ -825,19 +801,4 @@ with tabs[1]:
         )
         
         st.markdown("---")
-        st.markdown(f"#### 🏬 案{selected_p} 営業所別 集計（自社配達 vs 外部委託）")
-        off_sub_summary = p_act_df.groupby(['担当会社', '営業所表示']).agg(
-            担当件数=('市区町村コード', 'count'),
-            合計配達重量_t=('重量_t', 'sum'),
-            平均配送距離_km=('距離_km', 'mean'),
-            合計トンキロ=('トンキロ', 'sum')
-        ).reset_index().rename(columns={'担当会社': '会社', '営業所表示': '営業所区分'})
-        
-        st.dataframe(
-            off_sub_summary.style.format({
-                '合計配達重量_t': '{:,.2f}', '平均配送距離_km': '{:.2f}', '合計トンキロ': '{:,.2f}'
-            }),
-            use_container_width=True, hide_index=True
-        )
-    else:
-        st.info(f"案{selected_p} の割り当てデータがありません。")
+        st.markdown(
