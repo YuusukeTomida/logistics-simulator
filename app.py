@@ -554,7 +554,7 @@ for p_idx in [1, 2, 3, 4]:
                 j_indiv_off = info.get('j_indiv_off', '-')
                 t_indiv_off = info.get('t_indiv_off', '-')
                 
-                # ③ 一括担当「なし」のときに個別選択あり＝灰色、未設定＝白色の着色色判定に復元
+                # ③ 地図色塗りルールの元に戻し処理（一括＝営業所色, 個別選択あり＝灰色, 未設定＝白色）
                 if bulk == 'J社' and bulk_off in j_color_map_p:
                     fill_rgb = j_color_map_p[bulk_off]
                 elif bulk == 'T社' and bulk_off in t_color_map_p:
@@ -562,7 +562,7 @@ for p_idx in [1, 2, 3, 4]:
                 elif bulk in ['なし', '-'] and ((j_indiv_off != '-') or (t_indiv_off != '-')):
                     fill_rgb = (200, 200, 200) # 個別選択あり＝灰色
                 else:
-                    fill_rgb = (255, 255, 255) # 未設定＝白色
+                    fill_rgb = (255, 255, 255) # 未設定（一括なし＆個別なし）は白色
 
                 target_coords = [(sx, sy)]
                 if c_name in EXTRA_SEEDS:
@@ -610,12 +610,12 @@ for p_idx in [1, 2, 3, 4]:
             with map_col2:
                 st.image(cropped_img, width=600)
 
-# タブ1: 全体サマリー ＆ 現状 vs 4つの変更案比較
+# タブ1: 全体サマリー ＆ 現状 vs 4つの変更案比較（①J社＋T社「合計」比較追加 ＆ ②エクセル「白地図エリアマップ」に比較表追加）
 with tabs[0]:
-    st.subheader("📈 会社毎の「現状」vs「4つの変更案（案1〜案4）」一括比較サマリー")
-    st.caption("全4パターンの変更案でのトンキロ、配達重量、削減率を一覧で一括比較します。")
+    st.subheader("📈 会社毎 ＆ 全体合計の「現状」vs「4つの変更案（案1〜案4）」一括比較サマリー")
+    st.caption("J社・T社個別の数値に加え、運送2社全体の合計トンキロ・削減率を一括比較します。")
 
-    # ② 現状基準データフレーム（完全同一算出基準による安定初期集計）
+    # ② 現状基準データフレーム（完全同一算出基準による初期集計）
     base_0_df = build_initial_scenario_df(EXISTING_OFFICES_INFO)
     
     cur_j_wt_total = base_0_df['J社 配達重量(kg)'].sum() / 1000.0
@@ -628,7 +628,6 @@ with tabs[0]:
         {'パターン': '現状（基本）', '会社': 'T社', '担当自治体数': len(base_0_df), '配達重量_t': round(cur_t_wt_total, 2), 'トンキロ': round(cur_t_tk_total, 2), 'トンキロ削減量': 0.0, '削減率(%)': 0.0}
     ]
 
-    # ② 全案の最新リアルタイムデータからの完全同期集計（100%数値一致保証）
     for p_idx in [1, 2, 3, 4]:
         p_df = st.session_state[f"table_data_p{p_idx}"]
         
@@ -662,19 +661,52 @@ with tabs[0]:
                 if t_tk > 0 or str(r['T社個別']).strip() != '-':
                     t_cnt += 1
 
-        # J社 削減計算
         j_diff = cur_j_tk_total - j_tk_sum
         j_pct = round((j_diff / cur_j_tk_total * 100), 1) if cur_j_tk_total > 0 else 0.0
         summary_rows.append({'パターン': f'案{p_idx}', '会社': 'J社', '担当自治体数': j_cnt, '配達重量_t': round(j_wt_sum, 2), 'トンキロ': round(j_tk_sum, 2), 'トンキロ削減量': round(j_diff, 2), '削減率(%)': j_pct})
 
-        # T社 削減計算
         t_diff = cur_t_tk_total - t_tk_sum
         t_pct = round((t_diff / cur_t_tk_total * 100), 1) if cur_t_tk_total > 0 else 0.0
         summary_rows.append({'パターン': f'案{p_idx}', '会社': 'T社', '担当自治体数': t_cnt, '配達重量_t': round(t_wt_sum, 2), 'トンキロ': round(t_tk_sum, 2), 'トンキロ削減量': round(t_diff, 2), '削減率(%)': t_pct})
 
     summary_df = pd.DataFrame(summary_rows)
 
-    # 全体サマリーへの一括Excel出力ボタン（①ご指定通りの正確なセル配置マッピング）
+    # ① J社＋T社 合計集計行の動的生成
+    cur_comb_tk_total = cur_j_tk_total + cur_t_tk_total
+    comb_summary_rows = []
+    
+    # 現状（基本）の合計
+    comb_summary_rows.append({
+        'パターン': '現状（基本）',
+        'J社_トンキロ': round(cur_j_tk_total, 2),
+        'T社_トンキロ': round(cur_t_tk_total, 2),
+        '合計_トンキロ': round(cur_comb_tk_total, 2),
+        '合計_削減量': 0.0,
+        '合計_削減率(%)': 0.0
+    })
+
+    for p_idx in [1, 2, 3, 4]:
+        j_row = summary_df[(summary_df['パターン'] == f'案{p_idx}') & (summary_df['会社'] == 'J社')].iloc[0]
+        t_row = summary_df[(summary_df['パターン'] == f'案{p_idx}') & (summary_df['会社'] == 'T社')].iloc[0]
+        
+        j_tk_p = j_row['トンキロ']
+        t_tk_p = t_row['トンキロ']
+        comb_tk_p = j_tk_p + t_tk_p
+        comb_diff = cur_comb_tk_total - comb_tk_p
+        comb_pct = round((comb_diff / cur_comb_tk_total * 100), 1) if cur_comb_tk_total > 0 else 0.0
+        
+        comb_summary_rows.append({
+            'パターン': f'案{p_idx}',
+            'J社_トンキロ': j_tk_p,
+            'T社_トンキロ': t_tk_p,
+            '合計_トンキロ': round(comb_tk_p, 2),
+            '合計_削減量': round(comb_diff, 2),
+            '合計_削減率(%)': comb_pct
+        })
+
+    comb_summary_df = pd.DataFrame(comb_summary_rows)
+
+    # 全体サマリーへの一括Excel出力ボタン（②シート「白地図エリアマップ」に比較表追加）
     excel_full_bytes = io.BytesIO()
     with pd.ExcelWriter(excel_full_bytes, engine='openpyxl') as writer:
         all_cust_rows = []
@@ -701,13 +733,26 @@ with tabs[0]:
         ws_map = wb.create_sheet(title="白地図エリアマップ")
         ws_map['A1'] = "🗺️ 大阪府 市区町村別受持選択 白地図エリアマップ（案1〜案4 比較一覧）"
         
-        # ① ご指定通りの配置セル位置マッピング
-        # 案1: B2/B3, 案2: K2/K3, 案3: T2/T3, 案4: AC2/AC3
+        # ② シート「白地図エリアマップ」に「J社・T社・合計トンキロの比較表」を追加出力（A3〜F9セル）
+        ws_map['A3'] = "【全体トンキロ比較対比表（現状 vs 案1〜案4）】"
+        map_headers = ['パターン', 'J社 トンキロ(t・km)', 'T社 トンキロ(t・km)', '合計 トンキロ(t・km)', '合計 削減量', '合計 削減率(%)']
+        for col_idx, h_text in enumerate(map_headers, 1):
+            ws_map.cell(row=4, column=col_idx, value=h_text)
+            
+        for r_idx, c_row in enumerate(comb_summary_rows, 5):
+            ws_map.cell(row=r_idx, column=1, value=c_row['パターン'])
+            ws_map.cell(row=r_idx, column=2, value=c_row['J社_トンキロ'])
+            ws_map.cell(row=r_idx, column=3, value=c_row['T社_トンキロ'])
+            ws_map.cell(row=r_idx, column=4, value=c_row['合計_トンキロ'])
+            ws_map.cell(row=r_idx, column=5, value=c_row['合計_削減量'])
+            ws_map.cell(row=r_idx, column=6, value=f"{c_row['合計_削減率(%)']:+.1f}%")
+
+        # マップ画像のセル配置（比較表の下部、12行目からマップ画像を配置）
         map_cell_positions = {
-            1: ('B', 2, 3),   # 案1
-            2: ('K', 2, 3),   # 案2
-            3: ('T', 2, 3),   # 案3
-            4: ('AC', 2, 3)   # 案4
+            1: ('B', 12, 13),   # 案1: B12タイトル, B13画像
+            2: ('K', 12, 13),   # 案2: K12タイトル, K13画像
+            3: ('T', 12, 13),   # 案3: T12タイトル, T13画像
+            4: ('AC', 12, 13)   # 案4: AC12タイトル, AC13画像
         }
         
         for p_i in [1, 2, 3, 4]:
@@ -730,13 +775,24 @@ with tabs[0]:
             ws_map.column_dimensions[col_letter].width = 6.0
 
     st.download_button(
-        label="📥 全体シミュレーション＆4案一括データ（白地図・新規営業所併記）Excel出力",
+        label="📥 全体シミュレーション＆4案一括データ（白地図比較表・新規営業所併記）Excel出力",
         data=excel_full_bytes.getvalue(),
         file_name="大阪府配達エリア最適化シミュレーション_全体比較結果.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
         type="primary"
     )
+
+    st.markdown("---")
+    # ① J社＋T社「合計」の現状 vs 4案比較メトリックの表示
+    st.markdown("### 📊 J社 ＋ T社 全体合計：現状 vs 4案の比較")
+    cols_comb = st.columns(5)
+    for idx, col in enumerate(cols_comb):
+        row_c = comb_summary_df.iloc[idx]
+        with col:
+            st.markdown(f"#### {row_c['パターン']}")
+            st.metric("合計トンキロ", "{:,.1f} ton-km".format(row_c['合計_トンキロ']), delta=f"削減: {row_c['合計_削減量']:,.1f} ({row_c['合計_削減率(%)']:+.1f}%)" if idx > 0 else None)
+            st.caption(f"J社: {row_c['J社_トンキロ']:,.1f} ton-km / T社: {row_c['T社_トンキロ']:,.1f} ton-km")
 
     st.markdown("---")
     st.markdown("### 🏢 J社：現状 vs 4案の比較")
@@ -761,7 +817,7 @@ with tabs[0]:
             st.caption(f"件数: {int(row_d['担当自治体数'])} 件 / 重量: {row_d['配達重量_t']:,.1f} t")
 
     st.markdown("---")
-    st.write("### 📊 全パターン比較対比表")
+    st.write("### 📊 全パターン比較対比表（会社別）")
     st.dataframe(
         summary_df.style.format({
             '配達重量_t': '{:,.2f}', 'トンキロ': '{:,.2f}',
