@@ -175,8 +175,11 @@ def calc_haversine_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return round(R * c * 1.2, 1)
 
-if "custom_offices" not in st.session_state:
-    st.session_state.custom_offices = []
+# ① 新規営業所の登録状態をパターン別に完全分離管理（custom_offices_p1 〜 custom_offices_p4）
+for p_idx in [1, 2, 3, 4]:
+    key_name = f"custom_offices_p{p_idx}"
+    if key_name not in st.session_state:
+        st.session_state[key_name] = []
 
 def generate_office_colors(df_j, df_t, custom_offices):
     j_offices = sorted(list(set(df_j['J社営業所名'].dropna().astype(str).tolist() + [o['name'] for o in custom_offices if o['company'] == 'J社'])))
@@ -196,9 +199,6 @@ def generate_office_colors(df_j, df_t, custom_offices):
         t_color_map[off] = (int(30 * (1.0 - f)), int(140 * f), int(255 * f))
         
     return j_color_map, t_color_map, j_offices, t_offices
-
-J_OFFICE_COLOR_MAP, T_OFFICE_COLOR_MAP, J_OFFICES, T_OFFICES = generate_office_colors(df_j, df_t, st.session_state.custom_offices)
-ALL_OFFICES = sorted(list(set(J_OFFICES + T_OFFICES)))
 
 CITY_SEEDS = {
     '能勢町': (542, 143), '豊能町': (635, 232), '島本町': (897, 293), '高槻市': (816, 331), '枚方市': (923, 331),
@@ -224,10 +224,6 @@ EXTRA_SEEDS = {
     '大阪市此花区': [(477, 710), (503, 713)],
     '泉佐野市': [(236, 1101)]
 }
-
-all_office_info = dict(EXISTING_OFFICES_INFO)
-for cust in st.session_state.custom_offices:
-    all_office_info[(cust['company'], cust['name'])] = {'address': cust['address'], 'coords': cust['coords']}
 
 # 4. 距離・トンキロ算出関数
 def compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_indiv_off, wt_j_kg, wt_t_kg, office_info, municipal_coords):
@@ -273,7 +269,7 @@ def compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_in
     return dist_j, tk_j, dist_t, tk_t
 
 # 初期データ生成関数（案1〜案4用）
-def build_initial_scenario_df():
+def build_initial_scenario_df(office_info_dict):
     rows = []
     for i in range(len(df_j)):
         code = df_j.loc[i, '市区町村コード']
@@ -284,7 +280,7 @@ def build_initial_scenario_df():
         sub_j = str(df_j.loc[i, 'J社外部委託地域']).strip() == '◯'
         sub_t = str(df_t.loc[i, 'T社外部委託地域']).strip() == '◯'
         
-        dist_j, tk_j, dist_t, tk_t = compute_distance_and_tonkm(city, 'なし', '-', off_j_def, off_t_def, wt_j_kg, wt_t_kg, all_office_info, MUNICIPAL_HALL_COORDS)
+        dist_j, tk_j, dist_t, tk_t = compute_distance_and_tonkm(city, 'なし', '-', off_j_def, off_t_def, wt_j_kg, wt_t_kg, office_info_dict, MUNICIPAL_HALL_COORDS)
         init_mode = '委託配達' if (sub_j or sub_t) else '自社配達'
         
         rows.append({
@@ -297,11 +293,12 @@ def build_initial_scenario_df():
         })
     return pd.DataFrame(rows)
 
-# ② 受持選択（編集）用 4つの複製パターン（案1〜案4）のセッション状態管理
+# ② 受持選択（編集）用 4つの複製パターン（案1〜案4）のセッション状態初期化
 for p_idx in [1, 2, 3, 4]:
     key_name = f"table_data_p{p_idx}"
     if key_name not in st.session_state:
-        st.session_state[key_name] = build_initial_scenario_df()
+        # 初期はEXISTING_OFFICES_INFO基準で作成
+        st.session_state[key_name] = build_initial_scenario_df(EXISTING_OFFICES_INFO)
 
 # 5. タブUI構成（現状比較サマリー、会社別・営業所別集計、案1〜案4受持選択）
 tab_names = [
@@ -314,7 +311,6 @@ tab_names = [
 ]
 tabs = st.tabs(tab_names)
 
-# 各案の編集結果＆アクティブレコード保持用
 pattern_active_records = {1: [], 2: [], 3: [], 4: []}
 pattern_map_status = {1: {}, 2: {}, 3: {}, 4: {}}
 
@@ -325,41 +321,50 @@ display_cols = [
     'T社 距離(km)', 'T社 配達重量(kg)', 'T社 トンキロ(t・km)'
 ]
 
-# タブ3〜6: 案1〜案4 個別編集画面処理
+# タブ3〜6: 案1〜案4 個別編集画面処理（①案1〜4で新規営業所登録を完全独立化）
 for p_idx in [1, 2, 3, 4]:
     tab_obj = tabs[p_idx + 1] # 0:サマリー, 1:会社営業所集計, 2:案1, 3:案2, 4:案3, 5:案4
     with tab_obj:
         st.subheader(f"📝 案{p_idx}：市町村別・受持選択テーブル")
-        st.caption(f"※ パターン「案{p_idx}」の設定を行います。変更後に「配達支店変更を反映」を押すと距離・トンキロが自動計算されます。")
+        st.caption(f"※ 案{p_idx} の設定を行います。新規営業所の登録や担当選択の変更後に「配達支店変更を反映」を押すと距離・トンキロが自動計算されます。")
         
-        # 新規営業所追加エリア（案1タブのみ入力設置、全案で共有可能）
-        if p_idx == 1:
-            st.markdown("##### ➕ 新規営業所の登録（J社 / T社）")
-            col_add_j, col_add_t = st.columns(2)
-            with col_add_j:
-                j_new_name = st.text_input("J社 営業所名", key="j_off_input_shared", placeholder="例: 茨木西")
-                j_new_addr = st.text_input("J社 所在地住所", key="j_off_addr_shared", placeholder="例: 大阪府茨木市駅前1-1-1")
-                if st.button("J社 営業所を追加", key="btn_add_j_shared"):
-                    if j_new_name and j_new_addr:
-                        detected_coords = geocode_address_precise(j_new_addr)
-                        st.session_state.custom_offices.append({
-                            'company': 'J社', 'name': j_new_name, 'address': j_new_addr, 'coords': detected_coords
-                        })
-                        st.success(f"J社新規営業所「{j_new_name}」（住所: {j_new_addr}）を追加しました！")
-                        st.rerun()
+        # ① パターン別（案1〜案4独立）の新規営業所管理・座標生成
+        p_custom_offices = st.session_state[f"custom_offices_p{p_idx}"]
+        
+        j_color_map_p, t_color_map_p, j_offices_p, t_offices_p = generate_office_colors(df_j, df_t, p_custom_offices)
+        all_offices_p = sorted(list(set(j_offices_p + t_offices_p)))
+        
+        p_office_info = dict(EXISTING_OFFICES_INFO)
+        for cust in p_custom_offices:
+            p_office_info[(cust['company'], cust['name'])] = {'address': cust['address'], 'coords': cust['coords']}
+        
+        # ① 案1〜案4それぞれのタブで独立した新規営業所登録フォーム
+        st.markdown(f"##### ➕ 案{p_idx} 専用 新規営業所の登録（J社 / T社）")
+        col_add_j, col_add_t = st.columns(2)
+        with col_add_j:
+            j_new_name = st.text_input("J社 営業所名", key=f"j_off_input_p{p_idx}", placeholder="例: 茨木西")
+            j_new_addr = st.text_input("J社 所在地住所", key=f"j_off_addr_p{p_idx}", placeholder="例: 大阪府茨木市駅前1-1-1")
+            if st.button("J社 営業所を追加", key=f"btn_add_j_p{p_idx}"):
+                if j_new_name and j_new_addr:
+                    detected_coords = geocode_address_precise(j_new_addr)
+                    st.session_state[f"custom_offices_p{p_idx}"].append({
+                        'company': 'J社', 'name': j_new_name, 'address': j_new_addr, 'coords': detected_coords
+                    })
+                    st.success(f"案{p_idx} に J社新規営業所「{j_new_name}」（住所: {j_new_addr}）を追加しました！")
+                    st.rerun()
 
-            with col_add_t:
-                t_new_name = st.text_input("T社 営業所名", key="t_off_input_shared", placeholder="例: 堺中央")
-                t_new_addr = st.text_input("T社 所在地住所", key="t_off_addr_shared", placeholder="例: 大阪府堺市堺区南瓦町3-1")
-                if st.button("T社 営業所を追加", key="btn_add_t_shared"):
-                    if t_new_name and t_new_addr:
-                        detected_coords = geocode_address_precise(t_new_addr)
-                        st.session_state.custom_offices.append({
-                            'company': 'T社', 'name': t_new_name, 'address': t_new_addr, 'coords': detected_coords
-                        })
-                        st.success(f"T社新規営業所「{t_new_name}」（住所: {t_new_addr}）を追加しました！")
-                        st.rerun()
-            st.markdown("---")
+        with col_add_t:
+            t_new_name = st.text_input("T社 営業所名", key=f"t_off_input_p{p_idx}", placeholder="例: 堺中央")
+            t_new_addr = st.text_input("T社 所在地住所", key=f"t_off_addr_p{p_idx}", placeholder="例: 大阪府堺市堺区南瓦町3-1")
+            if st.button("T社 営業所を追加", key=f"btn_add_t_p{p_idx}"):
+                if t_new_name and t_new_addr:
+                    detected_coords = geocode_address_precise(t_new_addr)
+                    st.session_state[f"custom_offices_p{p_idx}"].append({
+                        'company': 'T社', 'name': t_new_name, 'address': t_new_addr, 'coords': detected_coords
+                    })
+                    st.success(f"案{p_idx} に T社新規営業所「{t_new_name}」（住所: {t_new_addr}）を追加しました！")
+                    st.rerun()
+        st.markdown("---")
 
         curr_p_df = st.session_state[f"table_data_p{p_idx}"]
         
@@ -370,8 +375,8 @@ for p_idx in [1, 2, 3, 4]:
         with col_btn2:
             excel_output_bytes = io.BytesIO()
             with pd.ExcelWriter(excel_output_bytes, engine='openpyxl') as writer:
-                if st.session_state.custom_offices:
-                    df_cust_export = pd.DataFrame(st.session_state.custom_offices)[['company', 'name', 'address']].rename(columns={
+                if p_custom_offices:
+                    df_cust_export = pd.DataFrame(p_custom_offices)[['company', 'name', 'address']].rename(columns={
                         'company': '担当会社', 'name': '新規営業所名', 'address': '所在地住所'
                     })
                 else:
@@ -388,14 +393,15 @@ for p_idx in [1, 2, 3, 4]:
                 use_container_width=True
             )
 
+        # ② 当該案の既存・新規営業所リスト（j_offices_p, t_offices_p, all_offices_p）を選択肢にセット
         edited_p_df = st.data_editor(
             curr_p_df[display_cols],
             column_config={
                 "配達方式": st.column_config.SelectboxColumn("配達方式", options=["自社配達", "委託配達"], required=True),
                 "市町村一括担当": st.column_config.SelectboxColumn("市町村一括担当", options=["なし", "J社", "T社"], required=True),
-                "市町村一括担当営業所": st.column_config.SelectboxColumn("市町村一括担当営業所", options=ALL_OFFICES + ["-"], required=True),
-                "J社個別": st.column_config.SelectboxColumn("J社個別", options=J_OFFICES + ["-"], required=True),
-                "T社個別": st.column_config.SelectboxColumn("T社個別", options=T_OFFICES + ["-"], required=True),
+                "市町村一括担当営業所": st.column_config.SelectboxColumn("市町村一括担当営業所", options=all_offices_p + ["-"], required=True),
+                "J社個別": st.column_config.SelectboxColumn("J社個別", options=j_offices_p + ["-"], required=True),
+                "T社個別": st.column_config.SelectboxColumn("T社個別", options=t_offices_p + ["-"], required=True),
                 "J社 距離(km)": st.column_config.NumberColumn("J社 距離 (km)", format="%.1f"),
                 "J社 配達重量(kg)": st.column_config.NumberColumn("J社 配達重量 (kg)", format="%d"),
                 "J社 トンキロ(t・km)": st.column_config.NumberColumn("J社 トンキロ (t・km)", format="%.2f"),
@@ -409,6 +415,7 @@ for p_idx in [1, 2, 3, 4]:
             key=f"main_editor_p{p_idx}"
         )
 
+        # ③ パターン固有の営業所位置情報（p_office_info）を用いて距離・トンキロを精密計算
         if recalc_clicked:
             for idx in range(len(edited_p_df)):
                 r = edited_p_df.iloc[idx]
@@ -420,7 +427,7 @@ for p_idx in [1, 2, 3, 4]:
                 wt_j = r['J社 配達重量(kg)']
                 wt_t = r['T社 配達重量(kg)']
                 
-                dj, tkj, dt, tkt = compute_distance_and_tonkm(c_name, b_comp, b_off, j_ind, t_ind, wt_j, wt_t, all_office_info, MUNICIPAL_HALL_COORDS)
+                dj, tkj, dt, tkt = compute_distance_and_tonkm(c_name, b_comp, b_off, j_ind, t_ind, wt_j, wt_t, p_office_info, MUNICIPAL_HALL_COORDS)
                 
                 curr_p_df.at[idx, '配達方式'] = r['配達方式']
                 curr_p_df.at[idx, '市町村一括担当'] = b_comp
@@ -511,22 +518,22 @@ for p_idx in [1, 2, 3, 4]:
         st.markdown("---")
         st.subheader(f"🗺️ 案{p_idx} 白地図エリアマップ")
         
-        # ① 白地図マップ凡例（色ブロック表示化）
-        st.markdown("##### 📌 営業所別 カラー凡例（色ブロック表示）")
+        # ④ カラー凡例のカラーブロックアイコンの大きさを3倍程度（48px）に拡大
+        st.markdown("##### 📌 営業所別 カラー凡例（拡大カラーブロック表示）")
         leg_cols = st.columns(2)
         with leg_cols[0]:
             st.write("**🔴 J社 営業所**")
-            for off in J_OFFICES:
-                c = J_OFFICE_COLOR_MAP.get(off, (239, 68, 68))
+            for off in j_offices_p:
+                c = j_color_map_p.get(off, (239, 68, 68))
                 hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
-                st.markdown(f'<span style="color:{hex_c}; font-size:20px;">■</span> **{off}**', unsafe_allow_html=True)
+                st.markdown(f'<span style="color:{hex_c}; font-size:48px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:18px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
                 
         with leg_cols[1]:
             st.write("**🔵 T社 営業所**")
-            for off in T_OFFICES:
-                c = T_OFFICE_COLOR_MAP.get(off, (59, 130, 246))
+            for off in t_offices_p:
+                c = t_color_map_p.get(off, (59, 130, 246))
                 hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
-                st.markdown(f'<span style="color:{hex_c}; font-size:20px;">■</span> **{off}**', unsafe_allow_html=True)
+                st.markdown(f'<span style="color:{hex_c}; font-size:48px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:18px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
 
         st.write("")
 
@@ -559,10 +566,10 @@ for p_idx in [1, 2, 3, 4]:
                 bulk_off = info['一括営業所']
                 indivs = info['個別選択']
                 
-                if bulk == 'J社' and bulk_off in J_OFFICE_COLOR_MAP:
-                    fill_rgb = J_OFFICE_COLOR_MAP[bulk_off]
-                elif bulk == 'T社' and bulk_off in T_OFFICE_COLOR_MAP:
-                    fill_rgb = T_OFFICE_COLOR_MAP[bulk_off]
+                if bulk == 'J社' and bulk_off in j_color_map_p:
+                    fill_rgb = j_color_map_p[bulk_off]
+                elif bulk == 'T社' and bulk_off in t_color_map_p:
+                    fill_rgb = t_color_map_p[bulk_off]
                 elif bulk == 'なし' and len(indivs) > 0:
                     fill_rgb = (200, 200, 200)
                 else:
@@ -591,7 +598,8 @@ for p_idx in [1, 2, 3, 4]:
                             m_curr = bg_protection_mask.copy()
                             cv2.floodFill(canvas_rgb, m_curr, (cs_x, cs_y), fill_rgb, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
                         
-                if 0 <= sx < w and 0 <= sy < h and len(indivs) > 0:
+                # ② 一括担当が「なし」の場合は地図上の赤・青の丸印（◯）を描画しない（bulk != 'なし' のときのみ描画）
+                if bulk != 'なし' and 0 <= sx < w and 0 <= sy < h and len(indivs) > 0:
                     DEFAULT_RGB = {'J社': (239, 68, 68), 'T社': (59, 130, 246)}
                     for d_idx, comp_indiv in enumerate(indivs):
                         dot_rgb = DEFAULT_RGB.get(comp_indiv, (0, 0, 0))
@@ -620,7 +628,7 @@ for p_idx in [1, 2, 3, 4]:
             with map_col2:
                 st.image(cropped_img, width=600)
 
-# タブ1: 全体サマリー ＆ 現状 vs 4つの変更案比較（③反映）
+# タブ1: 全体サマリー ＆ 現状 vs 4つの変更案比較
 with tabs[0]:
     st.subheader("📈 会社毎の「現状」vs「4つの変更案（案1〜案4）」一括比較サマリー")
     st.caption("全4パターンの変更案でのトンキロ、配達重量、削減率を一覧で一括比較します。")
@@ -634,7 +642,6 @@ with tabs[0]:
     
     summary_rows = []
     
-    # 現行の基準
     summary_rows.append({'パターン': '現状（基本）', '会社': 'J社', '担当自治体数': len(base_0_df), '配達重量_t': cur_j_wt, 'トンキロ': cur_j_tk, 'トンキロ削減量': 0.0, '削減率(%)': 0.0})
     summary_rows.append({'パターン': '現状（基本）', '会社': 'T社', '担当自治体数': len(base_0_df), '配達重量_t': cur_t_wt, 'トンキロ': cur_t_tk, 'トンキロ削減量': 0.0, '削減率(%)': 0.0})
     
@@ -666,7 +673,6 @@ with tabs[0]:
             
     summary_df = pd.DataFrame(summary_rows)
     
-    # メトリック表示（案1〜案4のハイライト）
     st.markdown("### 🏢 J社：現状 vs 4案の比較")
     cols_j = st.columns(5)
     j_sum = summary_df[summary_df['会社'] == 'J社']
