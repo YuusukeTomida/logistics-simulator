@@ -270,7 +270,7 @@ def compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_in
     
     return dist_j, tk_j, dist_t, tk_t
 
-# 初期データ生成関数（案1〜案4用共通関数）
+# 初期データ生成関数（案1〜案4用のディープコピー初期データフレーム生成）
 def build_initial_scenario_df(office_info_dict):
     rows = []
     for i in range(len(df_j)):
@@ -295,11 +295,11 @@ def build_initial_scenario_df(office_info_dict):
         })
     return pd.DataFrame(rows)
 
-# ② 受持選択（編集）用 4つの複製パターン（案1〜案4）のセッション状態完全初期化
+# ② 受持選択（編集）用 4つの複製パターン（案1〜案4）の独立したディープコピー初期化
 for p_idx in [1, 2, 3, 4]:
     key_name = f"table_data_p{p_idx}"
     if key_name not in st.session_state:
-        st.session_state[key_name] = build_initial_scenario_df(EXISTING_OFFICES_INFO)
+        st.session_state[key_name] = build_initial_scenario_df(EXISTING_OFFICES_INFO).copy(deep=True)
 
 # 5. タブUI構成
 tab_names = [
@@ -330,7 +330,7 @@ for p_idx in [1, 2, 3, 4]:
         st.subheader(f"📝 案{p_idx}：市町村別・受持選択テーブル")
         st.caption(f"※ 案{p_idx} の設定を行います。新規営業所の登録や担当選択の変更後に「配達支店変更を反映」を押すと距離・トンキロが自動計算されます。")
         
-        # ① パターン別（案1〜案4独立）の新規営業所管理・座標生成
+        # パターン別（案1〜案4独立）の新規営業所管理・座標生成
         p_custom_offices = st.session_state[f"custom_offices_p{p_idx}"]
         
         j_color_map_p, t_color_map_p, j_offices_p, t_offices_p = generate_office_colors(df_j, df_t, p_custom_offices)
@@ -370,7 +370,6 @@ for p_idx in [1, 2, 3, 4]:
 
         curr_p_df = st.session_state[f"table_data_p{p_idx}"]
         
-        # ③ 案1〜4個別タブからの個別出力ボタンは削除（全体サマリーに一括集約）
         recalc_clicked = st.button(f"🔄 案{p_idx} の配達支店変更を反映", type="primary", key=f"btn_recalc_p{p_idx}", use_container_width=True)
 
         edited_p_df = st.data_editor(
@@ -575,8 +574,6 @@ for p_idx in [1, 2, 3, 4]:
                         if line_bin_dilated[cs_y, cs_x] == 0:
                             m_curr = bg_protection_mask.copy()
                             cv2.floodFill(canvas_rgb, m_curr, (cs_x, cs_y), fill_rgb, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
-                        
-                # ② 「市町村一括担当」選択時の赤・青丸印（〇）を完全削除（描画しない）
 
             canvas_rgb[line_bin_dilated == 255] = (0, 0, 0)
 
@@ -595,21 +592,20 @@ for p_idx in [1, 2, 3, 4]:
             else:
                 cropped_img = canvas_rgb
 
-            pattern_map_images[p_idx] = cropped_img # 画像キャッシュ保存（⑦エクセル併記用）
+            pattern_map_images[p_idx] = cropped_img # 画像キャッシュ保存
 
             map_col1, map_col2, map_col3 = st.columns([1, 4, 1])
             with map_col2:
                 st.image(cropped_img, width=600)
 
-# タブ1: 全体サマリー ＆ 現状 vs 4つの変更案比較（④出力ボタン配置 ＆ ⑤〜⑦詳細Excel出力対応）
+# タブ1: 全体サマリー ＆ 現状 vs 4つの変更案比較
 with tabs[0]:
     st.subheader("📈 会社毎の「現状」vs「4つの変更案（案1〜案4）」一括比較サマリー")
     st.caption("全4パターンの変更案でのトンキロ、配達重量、削減率を一覧で一括比較します。")
 
-    # ① サマリー計算用の集計処理（リクエスト①指定ルール完全適用）
+    # ② 現状基準データフレーム（初期状態テーブル）
     base_0_df = st.session_state["table_data_p1"]
     
-    # 現行の基準集計
     cur_j_wt_total = base_0_df['J社 配達重量(kg)'].sum() / 1000.0
     cur_t_wt_total = base_0_df['T社 配達重量(kg)'].sum() / 1000.0
     cur_j_tk_total = base_0_df['J社 トンキロ(t・km)'].sum()
@@ -634,7 +630,6 @@ with tabs[0]:
             j_wt = float(r['J社 配達重量(kg)']) / 1000.0
             t_wt = float(r['T社 配達重量(kg)']) / 1000.0
             
-            # ① 集計ルール適用
             if bulk == 'J社':
                 j_tk_sum += (j_tk + t_tk)
                 j_wt_sum += (j_wt + t_wt)
@@ -666,10 +661,10 @@ with tabs[0]:
 
     summary_df = pd.DataFrame(summary_rows)
 
-    # ④ 全体サマリーへの一括Excel出力ボタンの設置（⑤新規営業所併記、⑥案1〜4個別シート、⑦白地図エリアマップ画像併記）
+    # 全体サマリーへの一括Excel出力ボタンの設置（①出力セル位置修正: 案1=B2/B3, 案2=K2/K3, 案3=T2/T3, 案4=AC2/AC3）
     excel_full_bytes = io.BytesIO()
     with pd.ExcelWriter(excel_full_bytes, engine='openpyxl') as writer:
-        # ⑤ シート1「新規営業所一覧」: 案1〜4で登録されている営業所内容を併記
+        # シート1「新規営業所一覧」: 案1〜4で登録されている営業所内容を併記
         all_cust_rows = []
         for p_i in [1, 2, 3, 4]:
             p_custs = st.session_state[f"custom_offices_p{p_i}"]
@@ -686,22 +681,26 @@ with tabs[0]:
             df_cust_all = pd.DataFrame(columns=['対象パターン', '担当会社', '新規営業所名', '所在地住所'])
         df_cust_all.to_excel(writer, sheet_name='新規営業所一覧', index=False)
 
-        # ⑥ シート2〜5「案1」「案2」「案3」「案4」を別シートで出力
+        # シート2〜5「案1」「案2」「案3」「案4」を別シートで出力
         for p_i in [1, 2, 3, 4]:
             p_df_export = st.session_state[f"table_data_p{p_i}"][display_cols].copy()
             p_df_export.to_excel(writer, sheet_name=f'案{p_i}', index=False)
 
-        # ⑦ シート6「白地図エリアマップ」を作成し、案1〜4の白地図画像（PNG）を重ならず指定セルに精密配置出力
+        # シート6「白地図エリアマップ」を作成し、案1〜4の白地図画像（PNG）を指示通り精密配置（①修正箇所）
         wb = writer.book
         ws_map = wb.create_sheet(title="白地図エリアマップ")
         ws_map['A1'] = "🗺️ 大阪府 市区町村別受持選択 白地図エリアマップ（案1〜案4 比較一覧）"
         
-        # ① 案1: B2/B3, 案2: J2/J3, 案3: Q2/Q3, 案4: X2/X3 の正確なセル配置マッピング
+        # ① ご指定通りの配置セル位置マッピング
+        # 案1: B2タイトル, B3画像
+        # 案2: K2タイトル, K3画像
+        # 案3: T2タイトル, T3画像
+        # 案4: AC2タイトル, AC3画像
         map_cell_positions = {
-            1: ('B', 2, 3), # B2タイトル, B3画像左上端
-            2: ('J', 2, 3), # J2タイトル, J3画像左上端
-            3: ('Q', 2, 3), # Q2タイトル, Q3画像左上端
-            4: ('X', 2, 3)  # X2タイトル, X3画像左上端
+            1: ('B', 2, 3),   # 案1
+            2: ('K', 2, 3),   # 案2
+            3: ('T', 2, 3),   # 案3
+            4: ('AC', 2, 3)   # 案4
         }
         
         for p_i in [1, 2, 3, 4]:
@@ -719,10 +718,10 @@ with tabs[0]:
                     xl_img.height = 520
                     ws_map.add_image(xl_img, f"{col_let}{img_row}")
 
-        # エクセル列幅の調整（画像同士の重なりを完全防止）
-        for col_idx in range(1, 32):
+        # 列幅設定（画像同士の重なりを完全解消）
+        for col_idx in range(1, 35):
             col_letter = openpyxl.utils.get_column_letter(col_idx)
-            ws_map.column_dimensions[col_letter].width = 6.5
+            ws_map.column_dimensions[col_letter].width = 6.0
 
     st.download_button(
         label="📥 全体シミュレーション＆4案一括データ（白地図・新規営業所併記）Excel出力",
