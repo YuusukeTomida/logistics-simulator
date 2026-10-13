@@ -20,8 +20,8 @@ st.title("🚚 運送2社 営業所受持エリア・トンキロ最適化シミ
 st.caption("大阪府の市区町村別・会社別の受持選択を行い、「現状」と「4つの改正案」のトンキロ・配達重量の変化を一括比較・シミュレーションします。")
 
 # 2. ファイルアップロード
-st.sidebar.header("📁 データ読み込み")
-uploaded_file = st.sidebar.file_uploader("「営業所受持地域.xlsx」をドラッグ＆ドロップ", type=["xlsx"])
+st.sidebar.header("📁 基本データ読み込み")
+uploaded_file = st.sidebar.file_uploader("「営業所受持地域.xlsx」をドラッグ＆ドロップ", type=["xlsx"], key="base_excel_uploader")
 
 if uploaded_file is None:
     st.info("👈 左側のサイドバーから「営業所受持地域.xlsx」をアップロードしてシミュレーションを開始してください。")
@@ -301,6 +301,112 @@ for p_idx in [1, 2, 3, 4]:
     if key_name not in st.session_state:
         st.session_state[key_name] = build_initial_scenario_df(EXISTING_OFFICES_INFO).copy(deep=True)
 
+# ① 変更案設定Excelファイルの取り込み処理（案1〜案4の設定・新規営業所を一括反映）
+st.sidebar.markdown("---")
+st.sidebar.header("📥 変更案設定Excelを取り込み")
+st.sidebar.caption("あらかじめ作成した設定Excelを取り込み、案1〜4の設定を一括反映します。")
+
+# ② 取り込み用エクセルテンプレートファイルのダウンロードボタン配置
+template_bytes_buf = io.BytesIO()
+with pd.ExcelWriter(template_bytes_buf, engine='openpyxl') as t_writer:
+    df_cust_sample = pd.DataFrame([
+        {'対象パターン': '案1', '担当会社': 'J社', '新規営業所名': '茨木西', '所在地住所': '大阪府茨木市駅前1-1-1'},
+        {'対象パターン': '案2', '担当会社': 'T社', '新規営業所名': '堺中央', '所在地住所': '大阪府堺市堺区南瓦町3-1'}
+    ])
+    df_cust_sample.to_excel(t_writer, sheet_name='新規営業所一覧', index=False)
+    
+    df_tmpl_base = build_initial_scenario_df(EXISTING_OFFICES_INFO)[[
+        '市町村コード', '市町村名', '配達方式', '市町村一括担当', '市町村一括担当営業所', 'J社個別', 'T社個別'
+    ]]
+    for p_i in [1, 2, 3, 4]:
+        df_tmpl_base.to_excel(t_writer, sheet_name=f'案{p_i}', index=False)
+
+st.sidebar.download_button(
+    label="📄 一括取り込み用Excelテンプレートをダウンロード",
+    data=template_bytes_buf.getvalue(),
+    file_name="変更案設定_一括取り込み用テンプレート.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    use_container_width=True
+)
+
+imported_scenario_file = st.sidebar.file_uploader("変更案設定Excelを選択", type=["xlsx"], key="scenario_excel_uploader")
+
+if imported_scenario_file is not None:
+    try:
+        xls_imp = pd.ExcelFile(imported_scenario_file)
+        
+        # 1) 「新規営業所一覧」シートの読み込み
+        if '新規営業所一覧' in xls_imp.sheet_names:
+            df_imp_cust = pd.read_excel(xls_imp, sheet_name='新規営業所一覧')
+            for _, c_row in df_imp_cust.iterrows():
+                p_str = str(c_row.get('対象パターン', '')).strip()
+                p_num = None
+                if '1' in p_str or '１' in p_str: p_num = 1
+                elif '2' in p_str or '２' in p_str: p_num = 2
+                elif '3' in p_str or '３' in p_num_str := p_str: p_num = 3
+                elif '4' in p_str or '４' in p_str: p_num = 4
+                
+                if p_num and '担当会社' in c_row and '新規営業所名' in c_row and '所在地住所' in c_row:
+                    comp = str(c_row['担当会社']).strip()
+                    c_name = str(c_row['新規営業所名']).strip()
+                    c_addr = str(c_row['所在地住所']).strip()
+                    
+                    if c_name and c_addr:
+                        coords = geocode_address_precise(c_addr)
+                        # 既存チェック
+                        existing_names = [x['name'] for x in st.session_state[f"custom_offices_p{p_num}"]]
+                        if c_name not in existing_names:
+                            st.session_state[f"custom_offices_p{p_num}"].append({
+                                'company': comp, 'name': c_name, 'address': c_addr, 'coords': coords
+                            })
+
+        # 2) 「案1」〜「案4」シートの読み込み
+        for p_i in [1, 2, 3, 4]:
+            sheet_target = f'案{p_i}'
+            if sheet_target in xls_imp.sheet_names:
+                df_imp_p = pd.read_excel(xls_imp, sheet_name=sheet_target)
+                curr_p_df = st.session_state[f"table_data_p{p_i}"]
+                
+                p_customs = st.session_state[f"custom_offices_p{p_i}"]
+                p_off_info = dict(EXISTING_OFFICES_INFO)
+                for cust in p_customs:
+                    p_office_info[(cust['company'], cust['name'])] = {'address': cust['address'], 'coords': cust['coords']}
+                
+                for idx, r_imp in df_imp_p.iterrows():
+                    c_code = r_imp.get('市町村コード')
+                    c_name = str(r_imp.get('市町村名', '')).strip()
+                    
+                    match_idx = curr_p_df[curr_p_df['市町村名'] == c_name].index
+                    if len(match_idx) > 0:
+                        i_target = match_idx[0]
+                        
+                        b_mode = str(r_imp.get('配達方式', curr_p_df.loc[i_target, '配達方式'])).strip()
+                        b_comp = str(r_imp.get('市町村一括担当', curr_p_df.loc[i_target, '市町村一括担当'])).strip()
+                        b_off = str(r_imp.get('市町村一括担当営業所', curr_p_df.loc[i_target, '市町村一括担当営業所'])).strip()
+                        j_ind = str(r_imp.get('J社個別', curr_p_df.loc[i_target, 'J社個別'])).strip()
+                        t_ind = str(r_imp.get('T社個別', curr_p_df.loc[i_target, 'T社個別'])).strip()
+                        
+                        wt_j = curr_p_df.loc[i_target, 'J社 配達重量(kg)']
+                        wt_t = curr_p_df.loc[i_target, 'T社 配達重量(kg)']
+                        
+                        dj, tkj, dt, tkt = compute_distance_and_tonkm(c_name, b_comp, b_off, j_ind, t_ind, wt_j, wt_t, p_off_info, MUNICIPAL_HALL_COORDS)
+                        
+                        curr_p_df.at[i_target, '配達方式'] = b_mode
+                        curr_p_df.at[i_target, '市町村一括担当'] = b_comp
+                        curr_p_df.at[i_target, '市町村一括担当営業所'] = b_off
+                        curr_p_df.at[i_target, 'J社個別'] = j_ind
+                        curr_p_df.at[i_target, 'T社個別'] = t_ind
+                        curr_p_df.at[i_target, 'J社 距離(km)'] = dj
+                        curr_p_df.at[i_target, 'J社 トンキロ(t・km)'] = tkj
+                        curr_p_df.at[i_target, 'T社 距離(km)'] = dt
+                        curr_p_df.at[i_target, 'T社 トンキロ(t・km)'] = tkt
+                        
+                st.session_state[f"table_data_p{p_i}"] = curr_p_df
+
+        st.sidebar.success("変更案設定Excel（案1〜4）を取り込みました！")
+    except Exception as e_imp:
+        st.sidebar.error(f"Excel取り込みエラー: {e_imp}")
+
 # 5. タブUI構成
 tab_names = [
     "📊 全体サマリー＆現状比較",
@@ -434,7 +540,6 @@ for p_idx in [1, 2, 3, 4]:
             j_indiv_off = r['J社個別']
             t_indiv_off = r['T社個別']
             
-            # 最新演算距離・トンキロ（即時同期待避）
             dj_now, tkj_now, dt_now, tkt_now = compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_indiv_off, orig['J社 配達重量(kg)'], orig['T社 配達重量(kg)'], p_office_info, MUNICIPAL_HALL_COORDS)
             
             curr_p_df.at[idx, '市町村一括担当'] = bulk_comp
@@ -554,7 +659,6 @@ for p_idx in [1, 2, 3, 4]:
                 j_indiv_off = info.get('j_indiv_off', '-')
                 t_indiv_off = info.get('t_indiv_off', '-')
                 
-                # ③ 地図色塗りルールの元に戻し処理（一括＝営業所色, 個別選択あり＝灰色, 未設定＝白色）
                 if bulk == 'J社' and bulk_off in j_color_map_p:
                     fill_rgb = j_color_map_p[bulk_off]
                 elif bulk == 'T社' and bulk_off in t_color_map_p:
@@ -562,7 +666,7 @@ for p_idx in [1, 2, 3, 4]:
                 elif bulk in ['なし', '-'] and ((j_indiv_off != '-') or (t_indiv_off != '-')):
                     fill_rgb = (200, 200, 200) # 個別選択あり＝灰色
                 else:
-                    fill_rgb = (255, 255, 255) # 未設定（一括なし＆個別なし）は白色
+                    fill_rgb = (255, 255, 255) # 未設定＝白色
 
                 target_coords = [(sx, sy)]
                 if c_name in EXTRA_SEEDS:
@@ -610,12 +714,12 @@ for p_idx in [1, 2, 3, 4]:
             with map_col2:
                 st.image(cropped_img, width=600)
 
-# タブ1: 全体サマリー ＆ 現状 vs 4つの変更案比較（①J社＋T社「合計」比較追加 ＆ ②エクセル「白地図エリアマップ」に比較表追加）
+# タブ1: 全体サマリー ＆ 現状 vs 4つの変更案比較
 with tabs[0]:
-    st.subheader("📈 会社毎 ＆ 全体合計の「現状」vs「4つの変更案（案1〜案4）」一括比較サマリー")
+    st.subheader("📈 会社毎の「現状」vs「4つの変更案（案1〜案4）」一括比較サマリー")
     st.caption("J社・T社個別の数値に加え、運送2社全体の合計トンキロ・削減率を一括比較します。")
 
-    # ② 現状基準データフレーム（完全同一算出基準による初期集計）
+    # 現状基準データフレーム（完全同一算出基準による安定初期集計）
     base_0_df = build_initial_scenario_df(EXISTING_OFFICES_INFO)
     
     cur_j_wt_total = base_0_df['J社 配達重量(kg)'].sum() / 1000.0
@@ -628,6 +732,7 @@ with tabs[0]:
         {'パターン': '現状（基本）', '会社': 'T社', '担当自治体数': len(base_0_df), '配達重量_t': round(cur_t_wt_total, 2), 'トンキロ': round(cur_t_tk_total, 2), 'トンキロ削減量': 0.0, '削減率(%)': 0.0}
     ]
 
+    # 全案の最新リアルタイムデータからの完全同期集計
     for p_idx in [1, 2, 3, 4]:
         p_df = st.session_state[f"table_data_p{p_idx}"]
         
@@ -671,11 +776,10 @@ with tabs[0]:
 
     summary_df = pd.DataFrame(summary_rows)
 
-    # ① J社＋T社 合計集計行の動的生成
+    # J社＋T社 合計集計行の動的生成
     cur_comb_tk_total = cur_j_tk_total + cur_t_tk_total
     comb_summary_rows = []
     
-    # 現状（基本）の合計
     comb_summary_rows.append({
         'パターン': '現状（基本）',
         'J社_トンキロ': round(cur_j_tk_total, 2),
@@ -706,7 +810,7 @@ with tabs[0]:
 
     comb_summary_df = pd.DataFrame(comb_summary_rows)
 
-    # 全体サマリーへの一括Excel出力ボタン（②シート「白地図エリアマップ」に比較表追加）
+    # 全体サマリーへの一括Excel出力ボタン（ご指定通りの正確なセル位置配置）
     excel_full_bytes = io.BytesIO()
     with pd.ExcelWriter(excel_full_bytes, engine='openpyxl') as writer:
         all_cust_rows = []
@@ -733,7 +837,7 @@ with tabs[0]:
         ws_map = wb.create_sheet(title="白地図エリアマップ")
         ws_map['A1'] = "🗺️ 大阪府 市区町村別受持選択 白地図エリアマップ（案1〜案4 比較一覧）"
         
-        # ② シート「白地図エリアマップ」に「J社・T社・合計トンキロの比較表」を追加出力（A3〜F9セル）
+        # J社・T社・合計トンキロの比較表をA3〜F9セルに追加出力
         ws_map['A3'] = "【全体トンキロ比較対比表（現状 vs 案1〜案4）】"
         map_headers = ['パターン', 'J社 トンキロ(t・km)', 'T社 トンキロ(t・km)', '合計 トンキロ(t・km)', '合計 削減量', '合計 削減率(%)']
         for col_idx, h_text in enumerate(map_headers, 1):
@@ -747,7 +851,7 @@ with tabs[0]:
             ws_map.cell(row=r_idx, column=5, value=c_row['合計_削減量'])
             ws_map.cell(row=r_idx, column=6, value=f"{c_row['合計_削減率(%)']:+.1f}%")
 
-        # マップ画像のセル配置（比較表の下部、12行目からマップ画像を配置）
+        # ① ご指定通りの正確なセル配置マッピング（案1=B12/B13, 案2=K12/K13, 案3=T12/T13, 案4=AC12/AC13）
         map_cell_positions = {
             1: ('B', 12, 13),   # 案1: B12タイトル, B13画像
             2: ('K', 12, 13),   # 案2: K12タイトル, K13画像
@@ -784,7 +888,7 @@ with tabs[0]:
     )
 
     st.markdown("---")
-    # ① J社＋T社「合計」の現状 vs 4案比較メトリックの表示
+    # J社＋T社「合計」の現状 vs 4案比較メトリックの表示
     st.markdown("### 📊 J社 ＋ T社 全体合計：現状 vs 4案の比較")
     cols_comb = st.columns(5)
     for idx, col in enumerate(cols_comb):
