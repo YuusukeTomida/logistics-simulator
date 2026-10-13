@@ -188,7 +188,7 @@ except Exception as e:
     st.error("データの読み込みに失敗しました。J, T シートが含まれるExcelファイルであることを確認してください。")
     st.stop()
 
-# ① 取り込み前のファイル事前ダウンロードボタンの設置（基本データ読込直後・安全に位置配置）
+# 取り込み前のファイル事前ダウンロードボタンの設置
 st.sidebar.markdown("---")
 st.sidebar.header("📄 入力用Excelファイルの準備")
 st.sidebar.caption("設定変更や一括取り込みを行う前に、テンプレートや基本データを事前にダウンロードできます。")
@@ -461,7 +461,6 @@ pattern_active_records = {1: [], 2: [], 3: [], 4: []}
 pattern_map_status = {1: {}, 2: {}, 3: {}, 4: {}}
 pattern_map_images = {1: None, 2: None, 3: None, 4: None}
 
-# ③ タブ「案1」「案2」「案3」「案4」から「配達方式」列を削除
 display_cols = [
     '市町村コード', '市町村名', '市町村一括担当', '市町村一括担当営業所',
     'J社個別', 'T社個別',
@@ -692,9 +691,9 @@ for p_idx in [1, 2, 3, 4]:
                 elif bulk == 'T社' and bulk_off in t_color_map_p:
                     fill_rgb = t_color_map_p[bulk_off]
                 elif bulk in ['なし', '-'] and ((j_indiv_off != '-') or (t_indiv_off != '-')):
-                    fill_rgb = (200, 200, 200)
+                    fill_rgb = (200, 200, 200) # 個別選択あり＝灰色
                 else:
-                    fill_rgb = (255, 255, 255)
+                    fill_rgb = (255, 255, 255) # 未設定＝白色
 
                 target_coords = [(sx, sy)]
                 if c_name in EXTRA_SEEDS:
@@ -951,22 +950,15 @@ with tabs[0]:
         use_container_width=True, hide_index=True
     )
 
-# タブ2: ② 営業所別 配達重量（t）一括比較集計画面
+# タブ2: ① J社・T社分離 ＆ 最下行合計欄付き ＆ ② 新規営業所統合（1行化）テーブル生成
 with tabs[1]:
     st.subheader("🏬 各営業所の「現状」vs「案1〜案4」合計配達重量（t）比較集計")
-    st.caption("全営業所における「現状」および各変更案（案1〜案4）での合計配達重量（t）を横並びで一括比較します。")
+    st.caption("J社・T社それぞれの営業所について、「現状」および「案1〜案4」での合計配達重量（t）を一括比較します。")
     
-    # 全営業所マスターリスト収集
-    all_j_offs = set(df_j['J社営業所名'].dropna().astype(str).tolist())
-    all_t_offs = set(df_t['T社営業所名'].dropna().astype(str).tolist())
-    for p_i in [1, 2, 3, 4]:
-        for cust in st.session_state[f"custom_offices_p{p_i}"]:
-            if cust['company'] == 'J社': all_j_offs.add(cust['name'])
-            if cust['company'] == 'T社': all_t_offs.add(cust['name'])
+    base_j_offices = sorted(list(set(df_j['J社営業所名'].dropna().astype(str).tolist())))
+    base_t_offices = sorted(list(set(df_t['T社営業所名'].dropna().astype(str).tolist())))
 
-    office_summary_rows = []
-
-    # 各営業所のパターン別重量計算関数
+    # 各パターンの営業所毎重量マップ計算関数
     def get_office_weights_dict(p_df_in):
         w_dict = {}
         for _, r_item in p_df_in.iterrows():
@@ -990,46 +982,84 @@ with tabs[1]:
                     w_dict[key] = w_dict.get(key, 0.0) + wt_t
         return w_dict
 
-    # パターン別重量マップ事前抽出
     cur_w_map = get_office_weights_dict(build_initial_scenario_df(EXISTING_OFFICES_INFO))
     p1_w_map = get_office_weights_dict(st.session_state["table_data_p1"])
     p2_w_map = get_office_weights_dict(st.session_state["table_data_p2"])
     p3_w_map = get_office_weights_dict(st.session_state["table_data_p3"])
     p4_w_map = get_office_weights_dict(st.session_state["table_data_p4"])
 
-    # J社 営業所一覧行構築
-    for j_off in sorted(list(all_j_offs)):
-        office_summary_rows.append({
-            '担当会社': 'J社',
-            '営業所名': j_off,
-            '現状_配達重量_t': round(cur_w_map.get(('J社', j_off), 0.0), 2),
-            '案1_配達重量_t': round(p1_w_map.get(('J社', j_off), 0.0), 2),
-            '案2_配達重量_t': round(p2_w_map.get(('J社', j_off), 0.0), 2),
-            '案3_配達重量_t': round(p3_w_map.get(('J社', j_off), 0.0), 2),
-            '案4_配達重量_t': round(p4_w_map.get(('J社', j_off), 0.0), 2),
+    # 会社別の比較テーブル構築関数（①分離＋最下行合計 ＆ ②新規営業所1行統合）
+    def build_company_weight_compare_df(comp_name, base_offices):
+        rows = []
+        # 1. 現存営業所行
+        for off in base_offices:
+            rows.append({
+                '営業所名': off,
+                '現状_配達重量_t': round(cur_w_map.get((comp_name, off), 0.0), 2),
+                '案1_配達重量_t': round(p1_w_map.get((comp_name, off), 0.0), 2),
+                '案2_配達重量_t': round(p2_w_map.get((comp_name, off), 0.0), 2),
+                '案3_配達重量_t': round(p3_w_map.get((comp_name, off), 0.0), 2),
+                '案4_配達重量_t': round(p4_w_map.get((comp_name, off), 0.0), 2),
+            })
+            
+        # 2. ② 新規営業所の1行統合（案1はJ社案1, 案2はJ社案2...の値を1行に計上）
+        new_off_row_name = f"{comp_name}新規営業所"
+        p1_new_val = round(p1_w_map.get((comp_name, f"{comp_name}案1"), 0.0), 2)
+        p2_new_val = round(p2_w_map.get((comp_name, f"{comp_name}案2"), 0.0), 2)
+        p3_new_val = round(p3_w_map.get((comp_name, f"{comp_name}案3"), 0.0), 2)
+        p4_new_val = round(p4_w_map.get((comp_name, f"{comp_name}案4"), 0.0), 2)
+        
+        rows.append({
+            '営業所名': new_off_row_name,
+            '現状_配達重量_t': 0.0,
+            '案1_配達重量_t': p1_new_val,
+            '案2_配達重量_t': p2_new_val,
+            '案3_配達重量_t': p3_new_val,
+            '案4_配達重量_t': p4_new_val,
         })
+        
+        df_sub = pd.DataFrame(rows)
+        
+        # 3. ① 最下行に「合計」行を追加
+        tot_row = {
+            '営業所名': '合計',
+            '現状_配達重量_t': round(df_sub['現状_配達重量_t'].sum(), 2),
+            '案1_配達重量_t': round(df_sub['案1_配達重量_t'].sum(), 2),
+            '案2_配達重量_t': round(df_sub['案2_配達重量_t'].sum(), 2),
+            '案3_配達重量_t': round(df_sub['案3_配達重量_t'].sum(), 2),
+            '案4_配達重量_t': round(df_sub['案4_配達重量_t'].sum(), 2),
+        }
+        
+        df_out = pd.concat([df_sub, pd.DataFrame([tot_row])], ignore_index=True)
+        return df_out
 
-    # T社 営業所一覧行構築
-    for t_off in sorted(list(all_t_offs)):
-        office_summary_rows.append({
-            '担当会社': 'T社',
-            '営業所名': t_off,
-            '現状_配達重量_t': round(cur_w_map.get(('T社', t_off), 0.0), 2),
-            '案1_配達重量_t': round(p1_w_map.get(('T社', t_off), 0.0), 2),
-            '案2_配達重量_t': round(p2_w_map.get(('T社', t_off), 0.0), 2),
-            '案3_配達重量_t': round(p3_w_map.get(('T社', t_off), 0.0), 2),
-            '案4_配達重量_t': round(p4_w_map.get(('T社', t_off), 0.0), 2),
-        })
+    # J社・T社それぞれの比較表を表示
+    col_t1, col_t2 = st.columns(2)
+    
+    with col_t1:
+        st.markdown("#### 🔴 J社 営業所別 配達重量（t）比較表")
+        df_j_compare = build_company_weight_compare_df('J社', base_j_offices)
+        st.dataframe(
+            df_j_compare.style.format({
+                '現状_配達重量_t': '{:,.2f}',
+                '案1_配達重量_t': '{:,.2f}',
+                '案2_配達重量_t': '{:,.2f}',
+                '案3_配達重量_t': '{:,.2f}',
+                '案4_配達重量_t': '{:,.2f}'
+            }),
+            use_container_width=True, hide_index=True
+        )
 
-    df_off_weight_compare = pd.DataFrame(office_summary_rows)
-
-    st.dataframe(
-        df_off_weight_compare.style.format({
-            '現状_配達重量_t': '{:,.2f}',
-            '案1_配達重量_t': '{:,.2f}',
-            '案2_配達重量_t': '{:,.2f}',
-            '案3_配達重量_t': '{:,.2f}',
-            '案4_配達重量_t': '{:,.2f}'
-        }),
-        use_container_width=True, hide_index=True
-    )
+    with col_t2:
+        st.markdown("#### 🔵 T社 営業所別 配達重量（t）比較表")
+        df_t_compare = build_company_weight_compare_df('T社', base_t_offices)
+        st.dataframe(
+            df_t_compare.style.format({
+                '現状_配達重量_t': '{:,.2f}',
+                '案1_配達重量_t': '{:,.2f}',
+                '案2_配達重量_t': '{:,.2f}',
+                '案3_配達重量_t': '{:,.2f}',
+                '案4_配達重量_t': '{:,.2f}'
+            }),
+            use_container_width=True, hide_index=True
+        )
