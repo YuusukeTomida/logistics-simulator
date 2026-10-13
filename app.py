@@ -449,7 +449,7 @@ if imported_scenario_file is not None:
 # 5. タブUI構成
 tab_names = [
     "📊 全体サマリー＆現状比較",
-    "🏢 営業所別 配達重量集計",
+    "🏢 営業所別 集計比較",
     "📝 案1：受持選択（編集）",
     "📝 案2：受持選択（編集）",
     "📝 案3：受持選択（編集）",
@@ -741,7 +741,7 @@ for p_idx in [1, 2, 3, 4]:
             with map_col2:
                 st.image(cropped_img, width=600)
 
-# タブ1: 全体サマリー ＆ 現状 vs 4つの変更案比較
+# タブ1: 全体サマリー ＆ 現状 vs 4つの変更案比較（② メトリックの動的「削減 / 増加」切り替え対応）
 with tabs[0]:
     st.subheader("📈 会社毎の「現状」vs「4つの変更案（案1〜案4）」一括比較サマリー")
     st.caption("J社・T社個別の数値に加え、運送2社全体の合計トンキロ・削減率を一括比較します。")
@@ -909,36 +909,29 @@ with tabs[0]:
     )
 
     st.markdown("---")
+    # ② J社＋T社「合計」の現状 vs 4案比較メトリック（増加／削減の動的ラベル表示）
     st.markdown("### 📊 J社 ＋ T社 全体合計：現状 vs 4案の比較")
     cols_comb = st.columns(5)
     for idx, col in enumerate(cols_comb):
         row_c = comb_summary_df.iloc[idx]
+        diff_v = row_c['合計_削減量']
+        pct_v = row_c['合計_削減率(%)']
+        
+        # ② 増加／削減の動的メッセージ設定
+        if idx == 0:
+            delta_label = None
+        else:
+            if diff_v >= 0:
+                delta_label = f"削減: {diff_v:,.1f} ({pct_v:+.1f}%)"
+            else:
+                inc_val = abs(diff_v)
+                inc_pct = abs(pct_v)
+                delta_label = f"増加: +{inc_val:,.1f} (+{inc_pct:.1f}%)"
+
         with col:
             st.markdown(f"#### {row_c['パターン']}")
-            st.metric("合計トンキロ", "{:,.1f} ton-km".format(row_c['合計_トンキロ']), delta=f"削減: {row_c['合計_削減量']:,.1f} ({row_c['合計_削減率(%)']:+.1f}%)" if idx > 0 else None)
+            st.metric("合計トンキロ", "{:,.1f} ton-km".format(row_c['合計_トンキロ']), delta=delta_label)
             st.caption(f"J社: {row_c['J社_トンキロ']:,.1f} ton-km / T社: {row_c['T社_トンキロ']:,.1f} ton-km")
-
-    st.markdown("---")
-    st.markdown("### 🏢 J社：現状 vs 4案の比較")
-    cols_j = st.columns(5)
-    j_sum = summary_df[summary_df['会社'] == 'J社']
-    for idx, col in enumerate(cols_j):
-        row_d = j_sum.iloc[idx]
-        with col:
-            st.markdown(f"#### {row_d['パターン']}")
-            st.metric("トンキロ", "{:,.1f} ton-km".format(row_d['トンキロ']), delta=f"削減: {row_d['トンキロ削減量']:,.1f} ({row_d['削減率(%)']:+.1f}%)" if idx > 0 else None)
-            st.caption(f"件数: {int(row_d['担当自治体数'])} 件 / 重量: {row_d['配達重量_t']:,.1f} t")
-
-    st.markdown("---")
-    st.markdown("### 🏢 T社：現状 vs 4案の比較")
-    cols_t = st.columns(5)
-    t_sum = summary_df[summary_df['会社'] == 'T社']
-    for idx, col in enumerate(cols_t):
-        row_d = t_sum.iloc[idx]
-        with col:
-            st.markdown(f"#### {row_d['パターン']}")
-            st.metric("トンキロ", "{:,.1f} ton-km".format(row_d['トンキロ']), delta=f"削減: {row_d['トンキロ削減量']:,.1f} ({row_d['削減率(%)']:+.1f}%)" if idx > 0 else None)
-            st.caption(f"件数: {int(row_d['担当自治体数'])} 件 / 重量: {row_d['配達重量_t']:,.1f} t")
 
     st.markdown("---")
     st.write("### 📊 全パターン比較対比表（会社別）")
@@ -950,17 +943,18 @@ with tabs[0]:
         use_container_width=True, hide_index=True
     )
 
-# タブ2: ① J社・T社分離 ＆ 最下行合計欄付き ＆ ② 新規営業所統合（1行化）テーブル生成
+# タブ2: ① J社・T社分離 ＆ 最下行合計欄付き 配達重量（t）＆ ③ 合計トンキロ（t・km）比較集計画面
 with tabs[1]:
-    st.subheader("🏬 各営業所の「現状」vs「案1〜案4」合計配達重量（t）比較集計")
-    st.caption("J社・T社それぞれの営業所について、「現状」および「案1〜案4」での合計配達重量（t）を一括比較します。")
+    st.subheader("🏬 各営業所の「現状」vs「案1〜案4」集計比較")
+    st.caption("J社・T社それぞれの営業所について、「現状」および「案1〜案4」での合計配達重量（t）および合計トンキロ（t・km）を一括比較します。")
     
     base_j_offices = sorted(list(set(df_j['J社営業所名'].dropna().astype(str).tolist())))
     base_t_offices = sorted(list(set(df_t['T社営業所名'].dropna().astype(str).tolist())))
 
-    # 各パターンの営業所毎重量マップ計算関数
-    def get_office_weights_dict(p_df_in):
+    # 各パターンの営業所毎（重量＆トンキロ）マップ計算関数
+    def get_office_metrics_dict(p_df_in):
         w_dict = {}
+        tk_dict = {}
         for _, r_item in p_df_in.iterrows():
             bulk = str(r_item['市町村一括担当']).strip()
             bulk_off = str(r_item['市町村一括担当営業所']).strip()
@@ -969,29 +963,33 @@ with tabs[1]:
             
             wt_j = float(r_item['J社 配達重量(kg)']) / 1000.0
             wt_t = float(r_item['T社 配達重量(kg)']) / 1000.0
+            tk_j = float(r_item['J社 トンキロ(t・km)'])
+            tk_t = float(r_item['T社 トンキロ(t・km)'])
             
             if bulk in ['J社', 'T社']:
                 key = (bulk, bulk_off)
                 w_dict[key] = w_dict.get(key, 0.0) + (wt_j + wt_t)
+                tk_dict[key] = tk_dict.get(key, 0.0) + (tk_j + tk_t)
             else:
                 if j_ind != '-':
                     key = ('J社', j_ind)
                     w_dict[key] = w_dict.get(key, 0.0) + wt_j
+                    tk_dict[key] = tk_dict.get(key, 0.0) + tk_j
                 if t_ind != '-':
                     key = ('T社', t_ind)
                     w_dict[key] = w_dict.get(key, 0.0) + wt_t
-        return w_dict
+                    tk_dict[key] = tk_dict.get(key, 0.0) + tk_t
+        return w_dict, tk_dict
 
-    cur_w_map = get_office_weights_dict(build_initial_scenario_df(EXISTING_OFFICES_INFO))
-    p1_w_map = get_office_weights_dict(st.session_state["table_data_p1"])
-    p2_w_map = get_office_weights_dict(st.session_state["table_data_p2"])
-    p3_w_map = get_office_weights_dict(st.session_state["table_data_p3"])
-    p4_w_map = get_office_weights_dict(st.session_state["table_data_p4"])
+    cur_w_map, cur_tk_map = get_office_metrics_dict(build_initial_scenario_df(EXISTING_OFFICES_INFO))
+    p1_w_map, p1_tk_map = get_office_metrics_dict(st.session_state["table_data_p1"])
+    p2_w_map, p2_tk_map = get_office_metrics_dict(st.session_state["table_data_p2"])
+    p3_w_map, p3_tk_map = get_office_metrics_dict(st.session_state["table_data_p3"])
+    p4_w_map, p4_tk_map = get_office_metrics_dict(st.session_state["table_data_p4"])
 
-    # 会社別の比較テーブル構築関数（①分離＋最下行合計 ＆ ②新規営業所1行統合）
+    # 1. 合計配達重量（t）比較テーブルの構築
     def build_company_weight_compare_df(comp_name, base_offices):
         rows = []
-        # 1. 現存営業所行
         for off in base_offices:
             rows.append({
                 '営業所名': off,
@@ -1002,7 +1000,6 @@ with tabs[1]:
                 '案4_配達重量_t': round(p4_w_map.get((comp_name, off), 0.0), 2),
             })
             
-        # 2. ② 新規営業所の1行統合（案1はJ社案1, 案2はJ社案2...の値を1行に計上）
         new_off_row_name = f"{comp_name}新規営業所"
         p1_new_val = round(p1_w_map.get((comp_name, f"{comp_name}案1"), 0.0), 2)
         p2_new_val = round(p2_w_map.get((comp_name, f"{comp_name}案2"), 0.0), 2)
@@ -1019,8 +1016,6 @@ with tabs[1]:
         })
         
         df_sub = pd.DataFrame(rows)
-        
-        # 3. ① 最下行に「合計」行を追加
         tot_row = {
             '営業所名': '合計',
             '現状_配達重量_t': round(df_sub['現状_配達重量_t'].sum(), 2),
@@ -1029,37 +1024,91 @@ with tabs[1]:
             '案3_配達重量_t': round(df_sub['案3_配達重量_t'].sum(), 2),
             '案4_配達重量_t': round(df_sub['案4_配達重量_t'].sum(), 2),
         }
-        
-        df_out = pd.concat([df_sub, pd.DataFrame([tot_row])], ignore_index=True)
-        return df_out
+        return pd.concat([df_sub, pd.DataFrame([tot_row])], ignore_index=True)
 
-    # J社・T社それぞれの比較表を表示
-    col_t1, col_t2 = st.columns(2)
-    
-    with col_t1:
+    # 2. ③ 合計トンキロ（t・km）比較テーブルの構築
+    def build_company_tonkm_compare_df(comp_name, base_offices):
+        rows = []
+        for off in base_offices:
+            rows.append({
+                '営業所名': off,
+                '現状_トンキロ': round(cur_tk_map.get((comp_name, off), 0.0), 2),
+                '案1_トンキロ': round(p1_tk_map.get((comp_name, off), 0.0), 2),
+                '案2_トンキロ': round(p2_tk_map.get((comp_name, off), 0.0), 2),
+                '案3_トンキロ': round(p3_tk_map.get((comp_name, off), 0.0), 2),
+                '案4_トンキロ': round(p4_tk_map.get((comp_name, off), 0.0), 2),
+            })
+            
+        new_off_row_name = f"{comp_name}新規営業所"
+        p1_new_val = round(p1_tk_map.get((comp_name, f"{comp_name}案1"), 0.0), 2)
+        p2_new_val = round(p2_tk_map.get((comp_name, f"{comp_name}案2"), 0.0), 2)
+        p3_new_val = round(p3_tk_map.get((comp_name, f"{comp_name}案3"), 0.0), 2)
+        p4_new_val = round(p4_tk_map.get((comp_name, f"{comp_name}案4"), 0.0), 2)
+        
+        rows.append({
+            '営業所名': new_off_row_name,
+            '現状_トンキロ': 0.0,
+            '案1_トンキロ': p1_new_val,
+            '案2_トンキロ': p2_new_val,
+            '案3_トンキロ': p3_new_val,
+            '案4_トンキロ': p4_new_val,
+        })
+        
+        df_sub = pd.DataFrame(rows)
+        tot_row = {
+            '営業所名': '合計',
+            '現状_トンキロ': round(df_sub['現状_トンキロ'].sum(), 2),
+            '案1_トンキロ': round(df_sub['案1_トンキロ'].sum(), 2),
+            '案2_トンキロ': round(df_sub['案2_トンキロ'].sum(), 2),
+            '案3_トンキロ': round(df_sub['案3_トンキロ'].sum(), 2),
+            '案4_トンキロ': round(df_sub['案4_トンキロ'].sum(), 2),
+        }
+        return pd.concat([df_sub, pd.DataFrame([tot_row])], ignore_index=True)
+
+    # 1) 配達重量（t）比較表示
+    st.markdown("### 📦 1. 各営業所の「現状」vs「案1〜案4」合計配達重量（t）比較")
+    col_w1, col_w2 = st.columns(2)
+    with col_w1:
         st.markdown("#### 🔴 J社 営業所別 配達重量（t）比較表")
-        df_j_compare = build_company_weight_compare_df('J社', base_j_offices)
         st.dataframe(
-            df_j_compare.style.format({
-                '現状_配達重量_t': '{:,.2f}',
-                '案1_配達重量_t': '{:,.2f}',
-                '案2_配達重量_t': '{:,.2f}',
-                '案3_配達重量_t': '{:,.2f}',
-                '案4_配達重量_t': '{:,.2f}'
+            build_company_weight_compare_df('J社', base_j_offices).style.format({
+                '現状_配達重量_t': '{:,.2f}', '案1_配達重量_t': '{:,.2f}',
+                '案2_配達重量_t': '{:,.2f}', '案3_配達重量_t': '{:,.2f}', '案4_配達重量_t': '{:,.2f}'
             }),
             use_container_width=True, hide_index=True
         )
 
-    with col_t2:
+    with col_w2:
         st.markdown("#### 🔵 T社 営業所別 配達重量（t）比較表")
-        df_t_compare = build_company_weight_compare_df('T社', base_t_offices)
         st.dataframe(
-            df_t_compare.style.format({
-                '現状_配達重量_t': '{:,.2f}',
-                '案1_配達重量_t': '{:,.2f}',
-                '案2_配達重量_t': '{:,.2f}',
-                '案3_配達重量_t': '{:,.2f}',
-                '案4_配達重量_t': '{:,.2f}'
+            build_company_weight_compare_df('T社', base_t_offices).style.format({
+                '現状_配達重量_t': '{:,.2f}', '案1_配達重量_t': '{:,.2f}',
+                '案2_配達重量_t': '{:,.2f}', '案3_配達重量_t': '{:,.2f}', '案4_配達重量_t': '{:,.2f}'
+            }),
+            use_container_width=True, hide_index=True
+        )
+
+    st.markdown("---")
+
+    # 2) ③ トンキロ（t・km）比較表示
+    st.markdown("### 🚚 2. 各営業所の「現状」vs「案1〜案4」合計トンキロ（t・km）比較")
+    col_tk1, col_tk2 = st.columns(2)
+    with col_tk1:
+        st.markdown("#### 🔴 J社 営業所別 トンキロ（t・km）比較表")
+        st.dataframe(
+            build_company_tonkm_compare_df('J社', base_j_offices).style.format({
+                '現状_トンキロ': '{:,.2f}', '案1_トンキロ': '{:,.2f}',
+                '案2_トンキロ': '{:,.2f}', '案3_トンキロ': '{:,.2f}', '案4_トンキロ': '{:,.2f}'
+            }),
+            use_container_width=True, hide_index=True
+        )
+
+    with col_tk2:
+        st.markdown("#### 🔵 T社 営業所別 トンキロ（t・km）比較表")
+        st.dataframe(
+            build_company_tonkm_compare_df('T社', base_t_offices).style.format({
+                '現状_トンキロ': '{:,.2f}', '案1_トンキロ': '{:,.2f}',
+                '案2_トンキロ': '{:,.2f}', '案3_トンキロ': '{:,.2f}', '案4_トンキロ': '{:,.2f}'
             }),
             use_container_width=True, hide_index=True
         )
