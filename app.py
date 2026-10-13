@@ -19,6 +19,27 @@ st.set_page_config(
 st.title("🚚 運送2社 営業所受持エリア・トンキロ最適化シミュレーター（大阪府版）")
 st.caption("大阪府の市区町村別・会社別の受持選択を行い、「現状」と「4つの改正案」のトンキロ・配達重量の変化を一括比較・シミュレーションします。")
 
+# 2. 基本データファイルアップロード
+st.sidebar.header("📁 基本データ読み込み")
+uploaded_file = st.sidebar.file_uploader("「営業所受持地域.xlsx」をドラッグ＆ドロップ", type=["xlsx"], key="base_excel_uploader")
+
+if uploaded_file is None:
+    st.info("👈 左側のサイドバーから「営業所受持地域.xlsx」をアップロードしてシミュレーションを開始してください。")
+    st.stop()
+
+@st.cache_data
+def load_data(file):
+    xls = pd.ExcelFile(file)
+    df_j = pd.read_excel(xls, sheet_name='J')
+    df_t = pd.read_excel(xls, sheet_name='T')
+    return df_j, df_t
+
+try:
+    df_j, df_t = load_data(uploaded_file)
+except Exception as e:
+    st.error("データの読み込みに失敗しました。J, T シートが含まれるExcelファイルであることを確認してください。")
+    st.stop()
+
 # 3. 役所・役場座標 ＆ 営業所初期座標定義
 MUNICIPAL_HALL_COORDS = {
     '大阪市都島区': (34.7011, 135.5303), '大阪市福島区': (34.6922, 135.4727), '大阪市此花区': (34.6853, 135.4619),
@@ -156,16 +177,15 @@ def calc_haversine_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return round(R * c * 1.2, 1)
 
-# ① 取り込み前のファイルダウンロード機能（サイドバーに事前ダウンロードボタンを配置）
+# ① 取り込み前のファイル事前ダウンロードボタンの設置（基本データ読込直後・安全に位置配置）
 st.sidebar.markdown("---")
 st.sidebar.header("📄 入力用Excelファイルの準備")
-st.sidebar.caption("設定変更や取り込みを行う前に、入力用テンプレートや基本データを事前にダウンロードできます。")
+st.sidebar.caption("設定変更や一括取り込みを行う前に、テンプレートや基本データを事前ダウンロードできます。")
 
-# ④ 案1〜4すべての入力シート（「新規営業所一覧」「案1」「案2」「案3」「案4」）を備えたテンプレート生成関数
-def create_full_import_template():
+# 案1〜4すべての入力シート（「新規営業所一覧」「案1」「案2」「案3」「案4」）を備えたテンプレート生成関数
+def create_full_import_template(df_j_in, df_t_in):
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine='openpyxl') as t_writer:
-        # 新規営業所一覧（案1〜4のサンプル付き）
         df_cust_sample = pd.DataFrame([
             {'対象パターン': '案1', '担当会社': 'J社', '新規営業所名': 'J社案1', '所在地住所': '大阪府茨木市駅前1-1-1'},
             {'対象パターン': '案1', '担当会社': 'T社', '新規営業所名': 'T社案1', '所在地住所': '大阪府茨木市駅前1-1-1'},
@@ -178,15 +198,14 @@ def create_full_import_template():
         ])
         df_cust_sample.to_excel(t_writer, sheet_name='新規営業所一覧', index=False)
         
-        # 案1〜案4の市区町村データシート
         tmpl_rows = []
-        for i in range(len(df_j)):
-            code = df_j.loc[i, '市区町村コード']
-            city = df_j.loc[i, '市区町村名\n（漢字）']
-            off_j = df_j.loc[i, 'J社営業所名']
-            off_t = df_t.loc[i, 'T社営業所名']
-            sub_j = str(df_j.loc[i, 'J社外部委託地域']).strip() == '◯'
-            sub_t = str(df_t.loc[i, 'T社外部委託地域']).strip() == '◯'
+        for i in range(len(df_j_in)):
+            code = df_j_in.loc[i, '市区町村コード']
+            city = df_j_in.loc[i, '市区町村名\n（漢字）']
+            off_j = df_j_in.loc[i, 'J社営業所名']
+            off_t = df_t_in.loc[i, 'T社営業所名']
+            sub_j = str(df_j_in.loc[i, 'J社外部委託地域']).strip() == '◯'
+            sub_t = str(df_t_in.loc[i, 'T社外部委託地域']).strip() == '◯'
             init_mode = '委託配達' if (sub_j or sub_t) else '自社配達'
             
             tmpl_rows.append({
@@ -206,7 +225,7 @@ def create_full_import_template():
 
 st.sidebar.download_button(
     label="📄 一括取り込み用Excelテンプレートをダウンロード（案1〜4全シート付き）",
-    data=create_full_import_template(),
+    data=create_full_import_template(df_j, df_t),
     file_name="変更案設定_一括取り込み用テンプレート.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     use_container_width=True
@@ -454,7 +473,7 @@ for p_idx in [1, 2, 3, 4]:
         with col_addr_shared:
             new_shared_addr = st.text_input("新規営業所 所在地住所 (J社・T社共通)", key=f"shared_off_addr_p{p_idx}", placeholder="例: 大阪府茨木市駅前1-1-1")
         with col_btn_shared:
-            st.write("") # スペース調整
+            st.write("")
             st.write("")
             if st.button(f"J社案{p_idx} / T社案{p_idx} を追加", key=f"btn_add_shared_p{p_idx}"):
                 if new_shared_addr:
@@ -755,7 +774,7 @@ with tabs[0]:
                 t_tk_sum += (j_tk + t_tk)
                 t_wt_sum += (j_wt + t_wt)
                 t_cnt += 1
-            else:
+            else: # 'なし' または '-'
                 j_tk_sum += j_tk
                 j_wt_sum += j_wt
                 if j_tk > 0 or str(r['J社個別']).strip() != '-':
