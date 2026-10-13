@@ -156,52 +156,17 @@ def calc_haversine_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return round(R * c * 1.2, 1)
 
-# ① 取り込み前のファイル事前ダウンロードボタンの設置（基本データ読込の「前」でも利用可能）
-st.sidebar.markdown("---")
-st.sidebar.header("📄 入力用Excelファイルの準備")
-st.sidebar.caption("設定変更や一括取り込みを行う前に、テンプレートや基本データを事前ダウンロードできます。")
-
-# ④ 案1〜4すべての入力シート（「新規営業所一覧」「案1」「案2」「案3」「案4」）を備えたテンプレート生成関数
-def create_full_import_template():
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine='openpyxl') as t_writer:
-        # ③ 所在地住所の入力欄を1つにし、担当会社・新規営業所名を固定化
-        df_cust_sample = pd.DataFrame([
-            {'対象パターン': '案1', '所在地住所': '大阪府茨木市駅前1-1-1'},
-            {'対象パターン': '案2', '所在地住所': '大阪府堺市堺区南瓦町3-1'},
-            {'対象パターン': '案3', '所在地住所': '大阪府東大阪市荒本北1-1-1'},
-            {'対象パターン': '案4', '所在地住所': '大阪府岸和田市岸城町7-1'},
-        ])
-        df_cust_sample.to_excel(t_writer, sheet_name='新規営業所一覧', index=False)
-        
-        # 案1〜案4の標準市町村枠（ローカルまたは標準マスタ生成）
-        base_cities = list(MUNICIPAL_HALL_COORDS.keys())
-        tmpl_rows = []
-        for idx_c, city_item in enumerate(base_cities):
-            tmpl_rows.append({
-                '市町村コード': 270000 + idx_c,
-                '市町村名': city_item,
-                '配達方式': '自社配達',
-                '市町村一括担当': 'なし',
-                '市町村一括担当営業所': '-',
-                'J社個別': '大阪',
-                'T社個別': '大阪中央'
-            })
-        df_tmpl_base = pd.DataFrame(tmpl_rows)
-        for p_i in [1, 2, 3, 4]:
-            df_tmpl_base.to_excel(t_writer, sheet_name=f'案{p_i}', index=False)
-            
-    return buf.getvalue()
-
-st.sidebar.download_button(
-    label="📄 一括取り込み用Excelテンプレートをダウンロード（案1〜4全シート付き）",
-    data=create_full_import_template(),
-    file_name="変更案設定_一括取り込み用テンプレート.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    use_container_width=True
-)
-
-st.sidebar.markdown("---")
+# ③ パターン文字列から対象の案番号（1〜4）を柔軟に分解取得する関数
+def parse_pattern_num(val):
+    s = str(val).strip()
+    res = []
+    for p in [1, 2, 3, 4]:
+        if str(p) in s or f"案{p}" in s or f"案{chr(ord('１')+p-1)}" in s:
+            res.append(p)
+    if not res:
+        if '全' in s or '一括' in s or 'ALL' in s.upper():
+            return [1, 2, 3, 4]
+    return res
 
 # 2. 基本データファイルアップロード
 st.sidebar.header("📁 基本データ読み込み")
@@ -223,6 +188,61 @@ try:
 except Exception as e:
     st.error("データの読み込みに失敗しました。J, T シートが含まれるExcelファイルであることを確認してください。")
     st.stop()
+
+# ① ファイル取り込み前のダウンロードボタン配置（アップロード完了直後に確実・安全出力）
+st.sidebar.markdown("---")
+st.sidebar.header("📄 入力用Excelファイルの準備")
+st.sidebar.caption("設定変更や一括取り込みを行う前に、テンプレートや基本データを事前にダウンロードできます。")
+
+# ② 案1〜4すべての入力シート（「新規営業所一覧」「案1」「案2」「案3」「案4」）に現状参照営業所名をセットしたテンプレート生成関数
+def create_full_import_template(df_j_in, df_t_in):
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine='openpyxl') as t_writer:
+        # 新規営業所一覧（住所のみ入力の簡略化フォーマット）
+        df_cust_sample = pd.DataFrame([
+            {'対象パターン': '案1', '所在地住所': '大阪府茨木市駅前1-1-1'},
+            {'対象パターン': '案2', '所在地住所': '大阪府堺市堺区南瓦町3-1'},
+            {'対象パターン': '案3', '所在地住所': '大阪府東大阪市荒本北1-1-1'},
+            {'対象パターン': '案4', '所在地住所': '大阪府岸和田市岸城町7-1'},
+        ])
+        df_cust_sample.to_excel(t_writer, sheet_name='新規営業所一覧', index=False)
+        
+        # ② 案1〜案4シートにアップロードデータの現行参考営業所名をセット
+        tmpl_rows = []
+        for i in range(len(df_j_in)):
+            code = df_j_in.loc[i, '市区町村コード']
+            city = df_j_in.loc[i, '市区町村名\n（漢字）']
+            off_j = df_j_in.loc[i, 'J社営業所名']
+            off_t = df_t_in.loc[i, 'T社営業所名']
+            sub_j = str(df_j_in.loc[i, 'J社外部委託地域']).strip() == '◯'
+            sub_t = str(df_t_in.loc[i, 'T社外部委託地域']).strip() == '◯'
+            init_mode = '委託配達' if (sub_j or sub_t) else '自社配達'
+            
+            tmpl_rows.append({
+                '市町村コード': code,
+                '市町村名': city,
+                '配達方式': init_mode,
+                '市町村一括担当': 'なし',
+                '市町村一括担当営業所': '-',
+                'J社個別': off_j,
+                'T社個別': off_t
+            })
+        df_tmpl_base = pd.DataFrame(tmpl_rows)
+        for p_i in [1, 2, 3, 4]:
+            df_tmpl_base.to_excel(t_writer, sheet_name=f'案{p_i}', index=False)
+            
+    return buf.getvalue()
+
+st.sidebar.download_button(
+    label="📄 一括取り込み用Excelテンプレートをダウンロード（現行営業所参照・案1〜4全シート付き）",
+    data=create_full_import_template(df_j, df_t),
+    file_name="変更案設定_一括取り込み用テンプレート.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    use_container_width=True
+)
+
+st.sidebar.markdown("---")
+st.sidebar.header("📥 変更案設定Excelを取り込み")
 
 # 新規営業所の登録状態をパターン別に完全分離管理（custom_offices_p1 〜 custom_offices_p4）
 for p_idx in [1, 2, 3, 4]:
@@ -278,7 +298,10 @@ EXTRA_SEEDS = {
 def compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_indiv_off, wt_j_kg, wt_t_kg, office_info, municipal_coords):
     c_lat, c_lon = municipal_coords.get(city_name, (34.6853, 135.5208))
     
-    # 一括担当営業所が指定されている場合は単一座標から同一距離を算出
+    # ① 市町村一括担当が「なし」または未選択の場合は強制的に一括営業所を '-' にして安全処理
+    if bulk_comp in ['なし', '-', 'nan', 'None', '']:
+        bulk_off = '-'
+
     if bulk_off != '-' and bulk_off is not None:
         c_prefix = bulk_comp if bulk_comp in ['J社', 'T社'] else 'J社'
         coords = office_info.get((c_prefix, bulk_off), {}).get('coords')
@@ -347,44 +370,41 @@ for p_idx in [1, 2, 3, 4]:
         st.session_state[key_name] = build_initial_scenario_df(EXISTING_OFFICES_INFO).copy(deep=True)
 
 # 変更案設定Excelファイルの取り込み処理
-st.sidebar.header("📥 変更案設定Excelを取り込み")
-st.sidebar.caption("あらかじめ作成した設定Excelを取り込み、案1〜4の設定を一括反映します。")
-
 imported_scenario_file = st.sidebar.file_uploader("変更案設定Excelを選択 (案1〜4)", type=["xlsx"], key="scenario_excel_uploader")
 
 if imported_scenario_file is not None:
     try:
         xls_imp = pd.ExcelFile(imported_scenario_file)
         
+        # ③ 案1〜4すべての新規営業所・住所をパースして各案のsession_stateに追加
         if '新規営業所一覧' in xls_imp.sheet_names:
             df_imp_cust = pd.read_excel(xls_imp, sheet_name='新規営業所一覧')
             for _, c_row in df_imp_cust.iterrows():
-                p_str = str(c_row.get('対象パターン', '')).strip()
-                p_num = None
-                if '1' in p_str or '１' in p_str: p_num = 1
-                elif '2' in p_str or '２' in p_str: p_num = 2
-                elif '3' in p_str or '３' in p_str: p_num = 3
-                elif '4' in p_str or '４' in p_str: p_num = 4
-                
+                p_val = c_row.get('対象パターン', '')
                 c_addr = str(c_row.get('所在地住所', '')).strip()
                 
-                if p_num and c_addr:
+                p_nums = parse_pattern_num(p_val)
+                if not p_nums:
+                    p_nums = [1, 2, 3, 4]
+                    
+                if c_addr and c_addr != 'nan':
                     coords = geocode_address_precise(c_addr)
-                    
-                    j_name_auto = f"J社案{p_num}"
-                    t_name_auto = f"T社案{p_num}"
-                    
-                    existing_names = [x['name'] for x in st.session_state[f"custom_offices_p{p_num}"]]
-                    
-                    if j_name_auto not in existing_names:
-                        st.session_state[f"custom_offices_p{p_num}"].append({
-                            'company': 'J社', 'name': j_name_auto, 'address': c_addr, 'coords': coords
-                        })
-                    if t_name_auto not in existing_names:
-                        st.session_state[f"custom_offices_p{p_num}"].append({
-                            'company': 'T社', 'name': t_name_auto, 'address': c_addr, 'coords': coords
-                        })
+                    for p_num in p_nums:
+                        j_name_auto = f"J社案{p_num}"
+                        t_name_auto = f"T社案{p_num}"
+                        
+                        existing_names = [x['name'] for x in st.session_state[f"custom_offices_p{p_num}"]]
+                        
+                        if j_name_auto not in existing_names:
+                            st.session_state[f"custom_offices_p{p_num}"].append({
+                                'company': 'J社', 'name': j_name_auto, 'address': c_addr, 'coords': coords
+                            })
+                        if t_name_auto not in existing_names:
+                            st.session_state[f"custom_offices_p{p_num}"].append({
+                                'company': 'T社', 'name': t_name_auto, 'address': c_addr, 'coords': coords
+                            })
 
+        # ① & ③ 案1〜案4の受持設定の取り込みと最新距離計算
         for p_i in [1, 2, 3, 4]:
             sheet_target = f'案{p_i}'
             if sheet_target in xls_imp.sheet_names:
@@ -406,9 +426,20 @@ if imported_scenario_file is not None:
                         
                         b_mode = str(r_imp.get('配達方式', curr_p_df.loc[i_target, '配達方式'])).strip()
                         b_comp = str(r_imp.get('市町村一括担当', curr_p_df.loc[i_target, '市町村一括担当'])).strip()
-                        b_off = str(r_imp.get('市町村一括担当営業所', curr_p_df.loc[i_target, '市町村一括担当営業所'])).strip()
+                        b_off = str(r_imp.get('市町村一括担当営業所', '-')).strip()
                         j_ind = str(r_imp.get('J社個別', curr_p_df.loc[i_target, 'J社個別'])).strip()
                         t_ind = str(r_imp.get('T社個別', curr_p_df.loc[i_target, 'T社個別'])).strip()
+                        
+                        # ① 一括担当が「なし」の場合は一括営業所を '-' に強制クリア
+                        if b_comp in ['nan', 'None', '', 'なし', '-']:
+                            b_comp = 'なし'
+                            b_off = '-'
+                        if b_off in ['nan', 'None', '']:
+                            b_off = '-'
+                        if j_ind in ['nan', 'None', '']:
+                            j_ind = '-'
+                        if t_ind in ['nan', 'None', '']:
+                            t_ind = '-'
                         
                         wt_j = curr_p_df.loc[i_target, 'J社 配達重量(kg)']
                         wt_t = curr_p_df.loc[i_target, 'T社 配達重量(kg)']
@@ -469,7 +500,7 @@ for p_idx in [1, 2, 3, 4]:
         for cust in p_custom_offices:
             p_office_info[(cust['company'], cust['name'])] = {'address': cust['address'], 'coords': cust['coords']}
         
-        # ② & ③ 新規営業所登録フォーム（住所入力欄1つ、営業所名はJ社案X / T社案Xに自動固定）
+        # ② 画面上での新規営業所登録フォーム（住所入力欄1つ、営業所名はJ社案X / T社案Xに自動固定）
         st.markdown(f"##### ➕ 案{p_idx} 専用 新規営業所の登録（J社案{p_idx} / T社案{p_idx} 一括登録）")
         col_addr_shared, col_btn_shared = st.columns([3, 1])
         with col_addr_shared:
@@ -503,6 +534,7 @@ for p_idx in [1, 2, 3, 4]:
         
         recalc_clicked = st.button(f"🔄 案{p_idx} の配達支店変更を反映", type="primary", key=f"btn_recalc_p{p_idx}", use_container_width=True)
 
+        # ② ドロップダウン選択肢（all_offices_p, j_offices_p, t_offices_p）に J社案X / T社案X が即時追加され選択可能
         edited_p_df = st.data_editor(
             curr_p_df[display_cols],
             column_config={
