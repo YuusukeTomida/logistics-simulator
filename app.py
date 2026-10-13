@@ -295,18 +295,18 @@ def build_initial_scenario_df(office_info_dict):
         })
     return pd.DataFrame(rows)
 
-# ② 受持選択（編集）用 4つの複製パターン（案1〜案4）の独立したディープコピー初期化
+# 受持選択（編集）用 4つの複製パターン（案1〜案4）の独立したディープコピー初期化
 for p_idx in [1, 2, 3, 4]:
     key_name = f"table_data_p{p_idx}"
     if key_name not in st.session_state:
         st.session_state[key_name] = build_initial_scenario_df(EXISTING_OFFICES_INFO).copy(deep=True)
 
-# ① 変更案設定Excelファイルの取り込み処理（案1〜案4の設定・新規営業所を一括反映）
+# 変更案設定Excelファイルの取り込み処理（案1〜案4の設定・新規営業所を一括反映）
 st.sidebar.markdown("---")
 st.sidebar.header("📥 変更案設定Excelを取り込み")
 st.sidebar.caption("あらかじめ作成した設定Excelを取り込み、案1〜4の設定を一括反映します。")
 
-# ② 取り込み用エクセルテンプレートファイルのダウンロードボタン配置
+# 取り込み用エクセルテンプレートファイルのダウンロードボタン配置
 template_bytes_buf = io.BytesIO()
 with pd.ExcelWriter(template_bytes_buf, engine='openpyxl') as t_writer:
     df_cust_sample = pd.DataFrame([
@@ -343,7 +343,7 @@ if imported_scenario_file is not None:
                 p_num = None
                 if '1' in p_str or '１' in p_str: p_num = 1
                 elif '2' in p_str or '２' in p_str: p_num = 2
-                elif '3' in p_str or '３' in p_num_str := p_str: p_num = 3
+                elif '3' in p_str or '３' in p_str: p_num = 3
                 elif '4' in p_str or '４' in p_str: p_num = 4
                 
                 if p_num and '担当会社' in c_row and '新規営業所名' in c_row and '所在地住所' in c_row:
@@ -353,7 +353,6 @@ if imported_scenario_file is not None:
                     
                     if c_name and c_addr:
                         coords = geocode_address_precise(c_addr)
-                        # 既存チェック
                         existing_names = [x['name'] for x in st.session_state[f"custom_offices_p{p_num}"]]
                         if c_name not in existing_names:
                             st.session_state[f"custom_offices_p{p_num}"].append({
@@ -370,7 +369,7 @@ if imported_scenario_file is not None:
                 p_customs = st.session_state[f"custom_offices_p{p_i}"]
                 p_off_info = dict(EXISTING_OFFICES_INFO)
                 for cust in p_customs:
-                    p_office_info[(cust['company'], cust['name'])] = {'address': cust['address'], 'coords': cust['coords']}
+                    p_off_info[(cust['company'], cust['name'])] = {'address': cust['address'], 'coords': cust['coords']}
                 
                 for idx, r_imp in df_imp_p.iterrows():
                     c_code = r_imp.get('市町村コード')
@@ -436,7 +435,6 @@ for p_idx in [1, 2, 3, 4]:
         st.subheader(f"📝 案{p_idx}：市町村別・受持選択テーブル")
         st.caption(f"※ 案{p_idx} の設定を行います。新規営業所の登録や担当選択の変更後に「配達支店変更を反映」を押すと距離・トンキロが自動計算されます。")
         
-        # パターン別（案1〜案4独立）の新規営業所管理・座標生成
         p_custom_offices = st.session_state[f"custom_offices_p{p_idx}"]
         
         j_color_map_p, t_color_map_p, j_offices_p, t_offices_p = generate_office_colors(df_j, df_t, p_custom_offices)
@@ -446,7 +444,6 @@ for p_idx in [1, 2, 3, 4]:
         for cust in p_custom_offices:
             p_office_info[(cust['company'], cust['name'])] = {'address': cust['address'], 'coords': cust['coords']}
         
-        # 案1〜案4それぞれのタブで独立した新規営業所登録フォーム
         st.markdown(f"##### ➕ 案{p_idx} 専用 新規営業所の登録（J社 / T社）")
         col_add_j, col_add_t = st.columns(2)
         with col_add_j:
@@ -666,7 +663,7 @@ for p_idx in [1, 2, 3, 4]:
                 elif bulk in ['なし', '-'] and ((j_indiv_off != '-') or (t_indiv_off != '-')):
                     fill_rgb = (200, 200, 200) # 個別選択あり＝灰色
                 else:
-                    fill_rgb = (255, 255, 255) # 未設定＝白色
+                    fill_rgb = (255, 255, 255) # 未設定（一括なし＆個別なし）は白色
 
                 target_coords = [(sx, sy)]
                 if c_name in EXTRA_SEEDS:
@@ -719,7 +716,7 @@ with tabs[0]:
     st.subheader("📈 会社毎の「現状」vs「4つの変更案（案1〜案4）」一括比較サマリー")
     st.caption("J社・T社個別の数値に加え、運送2社全体の合計トンキロ・削減率を一括比較します。")
 
-    # 現状基準データフレーム（完全同一算出基準による安定初期集計）
+    # 現状基準データフレーム（完全同一算出基準による初期集計）
     base_0_df = build_initial_scenario_df(EXISTING_OFFICES_INFO)
     
     cur_j_wt_total = base_0_df['J社 配達重量(kg)'].sum() / 1000.0
@@ -810,7 +807,7 @@ with tabs[0]:
 
     comb_summary_df = pd.DataFrame(comb_summary_rows)
 
-    # 全体サマリーへの一括Excel出力ボタン（ご指定通りの正確なセル位置配置）
+    # 全体サマリーへの一括Excel出力ボタン（正確なセル位置配置）
     excel_full_bytes = io.BytesIO()
     with pd.ExcelWriter(excel_full_bytes, engine='openpyxl') as writer:
         all_cust_rows = []
@@ -851,7 +848,7 @@ with tabs[0]:
             ws_map.cell(row=r_idx, column=5, value=c_row['合計_削減量'])
             ws_map.cell(row=r_idx, column=6, value=f"{c_row['合計_削減率(%)']:+.1f}%")
 
-        # ① ご指定通りの正確なセル配置マッピング（案1=B12/B13, 案2=K12/K13, 案3=T12/T13, 案4=AC12/AC13）
+        # 正確なセル配置マッピング（案1=B12/B13, 案2=K12/K13, 案3=T12/T13, 案4=AC12/AC13）
         map_cell_positions = {
             1: ('B', 12, 13),   # 案1: B12タイトル, B13画像
             2: ('K', 12, 13),   # 案2: K12タイトル, K13画像
