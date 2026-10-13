@@ -6,6 +6,7 @@ import os
 import math
 import io
 import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.drawing.image import Image as OpenPyxlImage
 
 # 1. ページ基本設定
@@ -741,10 +742,10 @@ for p_idx in [1, 2, 3, 4]:
             with map_col2:
                 st.image(cropped_img, width=600)
 
-# タブ1: 全体サマリー ＆ 現状 vs 4つの変更案比較（② メトリックの動的「削減 / 増加」切り替え対応）
+# タブ1: 全体サマリー ＆ 現状 vs 4つの変更案比較（② 「J社＋T社 全体合計」の配達重量（t）比較の追加）
 with tabs[0]:
     st.subheader("📈 会社毎の「現状」vs「4つの変更案（案1〜案4）」一括比較サマリー")
-    st.caption("J社・T社個別の数値に加え、運送2社全体の合計トンキロ・削減率を一括比較します。")
+    st.caption("J社・T社個別の数値に加え、運送2社全体の合計トンキロ・配達重量（t）・削減率を一括比較します。")
 
     base_0_df = build_initial_scenario_df(EXISTING_OFFICES_INFO)
     
@@ -802,6 +803,8 @@ with tabs[0]:
     summary_df = pd.DataFrame(summary_rows)
 
     cur_comb_tk_total = cur_j_tk_total + cur_t_tk_total
+    cur_comb_wt_total = cur_j_wt_total + cur_t_wt_total
+    
     comb_summary_rows = []
     
     comb_summary_rows.append({
@@ -810,7 +813,12 @@ with tabs[0]:
         'T社_トンキロ': round(cur_t_tk_total, 2),
         '合計_トンキロ': round(cur_comb_tk_total, 2),
         '合計_削減量': 0.0,
-        '合計_削減率(%)': 0.0
+        '合計_削減率(%)': 0.0,
+        'J社_配達重量_t': round(cur_j_wt_total, 2),
+        'T社_配達重量_t': round(cur_t_wt_total, 2),
+        '合計_配達重量_t': round(cur_comb_wt_total, 2),
+        '重量_削減量_t': 0.0,
+        '重量_削減率(%)': 0.0,
     })
 
     for p_idx in [1, 2, 3, 4]:
@@ -823,17 +831,29 @@ with tabs[0]:
         comb_diff = cur_comb_tk_total - comb_tk_p
         comb_pct = round((comb_diff / cur_comb_tk_total * 100), 1) if cur_comb_tk_total > 0 else 0.0
         
+        j_wt_p = j_row['配達重量_t']
+        t_wt_p = t_row['配達重量_t']
+        comb_wt_p = j_wt_p + t_wt_p
+        comb_wt_diff = cur_comb_wt_total - comb_wt_p
+        comb_wt_pct = round((comb_wt_diff / cur_comb_wt_total * 100), 1) if cur_comb_wt_total > 0 else 0.0
+        
         comb_summary_rows.append({
             'パターン': f'案{p_idx}',
             'J社_トンキロ': j_tk_p,
             'T社_トンキロ': t_tk_p,
             '合計_トンキロ': round(comb_tk_p, 2),
             '合計_削減量': round(comb_diff, 2),
-            '合計_削減率(%)': comb_pct
+            '合計_削減率(%)': comb_pct,
+            'J社_配達重量_t': j_wt_p,
+            'T社_配達重量_t': t_wt_p,
+            '合計_配達重量_t': round(comb_wt_p, 2),
+            '重量_削減量_t': round(comb_wt_diff, 2),
+            '重量_削減率(%)': comb_wt_pct,
         })
 
     comb_summary_df = pd.DataFrame(comb_summary_rows)
 
+    # ① 添付ファイル『【書式】大阪府配達エリア最適化シミュレーション_全体比較結果.xlsx』と完全同仕様のExcel出力作成
     excel_full_bytes = io.BytesIO()
     with pd.ExcelWriter(excel_full_bytes, engine='openpyxl') as writer:
         all_cust_rows = []
@@ -857,13 +877,69 @@ with tabs[0]:
             p_df_export.to_excel(writer, sheet_name=f'案{p_i}', index=False)
 
         wb = writer.book
+
+        # ① 書式スタイル適用処理（ヘッダー背景色: #C00000, 白文字, 枠線）
+        hdr_font = Font(name='BIZ UDPゴシック', size=11, bold=False, color='FFFFFF')
+        hdr_fill = PatternFill(start_color='C00000', end_color='C00000', fill_type='solid')
+        data_font = Font(name='BIZ UDPゴシック', size=11, bold=False)
+        border_thin = Border(left=Side(style='thin', color='D9D9D9'), right=Side(style='thin', color='D9D9D9'), top=Side(style='thin', color='D9D9D9'), bottom=Side(style='thin', color='D9D9D9'))
+
+        for sheet_name in ['新規営業所一覧', '案1', '案2', '案3', '案4']:
+            if sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                ws.views.sheetView[0].showGridLines = True
+                
+                # ヘッダー行装飾
+                for cell in ws[1]:
+                    cell.font = hdr_font
+                    cell.fill = hdr_fill
+                    cell.alignment = Alignment(horizontal='center', vertical='center')
+                    cell.border = border_thin
+                
+                # データ行装飾
+                for row in ws.iter_rows(min_row=2):
+                    for cell in row:
+                        cell.font = data_font
+                        cell.border = border_thin
+
+        # 列幅設定（添付書式完全対応）
+        ws_cust = wb['新規営業所一覧']
+        ws_cust.column_dimensions['A'].width = 13.5
+        ws_cust.column_dimensions['B'].width = 9.6
+        ws_cust.column_dimensions['C'].width = 13.9
+        ws_cust.column_dimensions['D'].width = 37.5
+
+        for p_i in [1, 2, 3, 4]:
+            ws_p = wb[f'案{p_i}']
+            ws_p.column_dimensions['A'].width = 12.5
+            ws_p.column_dimensions['B'].width = 16.1
+            ws_p.column_dimensions['C'].width = 14.0
+            ws_p.column_dimensions['D'].width = 22.2
+            ws_p.column_dimensions['E'].width = 12.7
+            ws_p.column_dimensions['F'].width = 12.7
+            ws_p.column_dimensions['G'].width = 14.9
+            ws_p.column_dimensions['H'].width = 18.6
+            ws_p.column_dimensions['I'].width = 20.4
+            ws_p.column_dimensions['J'].width = 15.2
+            ws_p.column_dimensions['K'].width = 18.9
+            ws_p.column_dimensions['L'].width = 20.6
+
+        # シート「白地図エリアマップ」生成（添付書式レイアウト対応）
         ws_map = wb.create_sheet(title="白地図エリアマップ")
+        ws_map.views.sheetView[0].showGridLines = True
         ws_map['A1'] = "🗺️ 大阪府 市区町村別受持選択 白地図エリアマップ（案1〜案4 比較一覧）"
+        ws_map['A1'].font = Font(name='BIZ UDPゴシック', size=11, bold=True)
         
         ws_map['A3'] = "【全体トンキロ比較対比表（現状 vs 案1〜案4）】"
+        ws_map['A3'].font = Font(name='BIZ UDPゴシック', size=11, bold=True)
+        
         map_headers = ['パターン', 'J社 トンキロ(t・km)', 'T社 トンキロ(t・km)', '合計 トンキロ(t・km)', '合計 削減量', '合計 削減率(%)']
         for col_idx, h_text in enumerate(map_headers, 1):
-            ws_map.cell(row=4, column=col_idx, value=h_text)
+            c_cell = ws_map.cell(row=4, column=col_idx, value=h_text)
+            c_cell.font = hdr_font
+            c_cell.fill = hdr_fill
+            c_cell.alignment = Alignment(horizontal='center', vertical='center')
+            c_cell.border = border_thin
             
         for r_idx, c_row in enumerate(comb_summary_rows, 5):
             ws_map.cell(row=r_idx, column=1, value=c_row['パターン'])
@@ -872,17 +948,25 @@ with tabs[0]:
             ws_map.cell(row=r_idx, column=4, value=c_row['合計_トンキロ'])
             ws_map.cell(row=r_idx, column=5, value=c_row['合計_削減量'])
             ws_map.cell(row=r_idx, column=6, value=f"{c_row['合計_削減率(%)']:+.1f}%")
+            
+            for c_i in range(1, 7):
+                cell_item = ws_map.cell(row=r_idx, column=c_i)
+                cell_item.font = data_font
+                cell_item.border = border_thin
 
+        # ① 添付書式通りの配置位置マッピング（B12, E12, M12, X12）
         map_cell_positions = {
-            1: ('B', 12, 13),   # 案1: B12, B13
-            2: ('K', 12, 13),   # 案2: K12, K13
-            3: ('T', 12, 13),   # 案3: T12, T13
-            4: ('AC', 12, 13)   # 案4: AC12, AC13
+            1: ('B', 12, 13),   # 案1: B12タイトル, B13画像
+            2: ('E', 12, 13),   # 案2: E12タイトル, E13画像
+            3: ('M', 12, 13),   # 案3: M12タイトル, M13画像
+            4: ('X', 12, 13)    # 案4: X12タイトル, X13画像
         }
         
         for p_i in [1, 2, 3, 4]:
             col_let, t_row, img_row = map_cell_positions[p_i]
-            ws_map[f"{col_let}{t_row}"] = f"■ 案{p_i} マップ"
+            t_cell = ws_map[f"{col_let}{t_row}"]
+            t_cell.value = f"■ 案{p_i} マップ"
+            t_cell.font = Font(name='BIZ UDPゴシック', size=11, bold=True)
             
             m_img = pattern_map_images[p_i]
             if m_img is not None:
@@ -895,9 +979,12 @@ with tabs[0]:
                     xl_img.height = 520
                     ws_map.add_image(xl_img, f"{col_let}{img_row}")
 
-        for col_idx in range(1, 35):
-            col_letter = openpyxl.utils.get_column_letter(col_idx)
-            ws_map.column_dimensions[col_letter].width = 6.0
+        ws_map.column_dimensions['A'].width = 14.3
+        ws_map.column_dimensions['B'].width = 21.5
+        ws_map.column_dimensions['C'].width = 21.9
+        ws_map.column_dimensions['D'].width = 21.5
+        ws_map.column_dimensions['E'].width = 13.7
+        ws_map.column_dimensions['F'].width = 17.0
 
     st.download_button(
         label="📥 全体シミュレーション＆4案一括データ（白地図比較表・新規営業所併記）Excel出力",
@@ -909,15 +996,14 @@ with tabs[0]:
     )
 
     st.markdown("---")
-    # ② J社＋T社「合計」の現状 vs 4案比較メトリック（増加／削減の動的ラベル表示）
-    st.markdown("### 📊 J社 ＋ T社 全体合計：現状 vs 4案の比較")
+    # 1) J社＋T社「全体合計」トンキロ比較メトリック
+    st.markdown("### 🚚 1. J社 ＋ T社 全体合計：現状 vs 4案のトンキロ比較")
     cols_comb = st.columns(5)
     for idx, col in enumerate(cols_comb):
         row_c = comb_summary_df.iloc[idx]
         diff_v = row_c['合計_削減量']
         pct_v = row_c['合計_削減率(%)']
         
-        # ② 増加／削減の動的メッセージ設定
         if idx == 0:
             delta_label = None
         else:
@@ -934,6 +1020,30 @@ with tabs[0]:
             st.caption(f"J社: {row_c['J社_トンキロ']:,.1f} ton-km / T社: {row_c['T社_トンキロ']:,.1f} ton-km")
 
     st.markdown("---")
+    # ② リクエスト②「J社 ＋ T社 全体合計：現状 vs 4案の比較」の配達重量（t）版の追加
+    st.markdown("### 📦 2. J社 ＋ T社 全体合計：現状 vs 4案の配達重量（t）比較")
+    cols_comb_wt = st.columns(5)
+    for idx, col in enumerate(cols_comb_wt):
+        row_cw = comb_summary_df.iloc[idx]
+        diff_w = row_cw['重量_削減量_t']
+        pct_w = row_cw['重量_削減率(%)']
+        
+        if idx == 0:
+            delta_wt_label = None
+        else:
+            if diff_w >= 0:
+                delta_wt_label = f"削減: {diff_w:,.1f} t ({pct_w:+.1f}%)"
+            else:
+                inc_w_val = abs(diff_w)
+                inc_w_pct = abs(pct_w)
+                delta_wt_label = f"増加: +{inc_w_val:,.1f} t (+{inc_w_pct:.1f}%)"
+
+        with col:
+            st.markdown(f"#### {row_cw['パターン']}")
+            st.metric("合計配達重量", "{:,.1f} t".format(row_cw['合計_配達重量_t']), delta=delta_wt_label)
+            st.caption(f"J社: {row_cw['J社_配達重量_t']:,.1f} t / T社: {row_cw['T社_配達重量_t']:,.1f} t")
+
+    st.markdown("---")
     st.write("### 📊 全パターン比較対比表（会社別）")
     st.dataframe(
         summary_df.style.format({
@@ -943,7 +1053,7 @@ with tabs[0]:
         use_container_width=True, hide_index=True
     )
 
-# タブ2: ① J社・T社分離 ＆ 最下行合計欄付き 配達重量（t）＆ ③ 合計トンキロ（t・km）比較集計画面
+# タブ2: 営業所別 集計比較（配達重量 ＆ トンキロ）
 with tabs[1]:
     st.subheader("🏬 各営業所の「現状」vs「案1〜案4」集計比較")
     st.caption("J社・T社それぞれの営業所について、「現状」および「案1〜案4」での合計配達重量（t）および合計トンキロ（t・km）を一括比較します。")
@@ -951,7 +1061,6 @@ with tabs[1]:
     base_j_offices = sorted(list(set(df_j['J社営業所名'].dropna().astype(str).tolist())))
     base_t_offices = sorted(list(set(df_t['T社営業所名'].dropna().astype(str).tolist())))
 
-    # 各パターンの営業所毎（重量＆トンキロ）マップ計算関数
     def get_office_metrics_dict(p_df_in):
         w_dict = {}
         tk_dict = {}
@@ -1026,7 +1135,7 @@ with tabs[1]:
         }
         return pd.concat([df_sub, pd.DataFrame([tot_row])], ignore_index=True)
 
-    # 2. ③ 合計トンキロ（t・km）比較テーブルの構築
+    # 2. 合計トンキロ（t・km）比較テーブルの構築
     def build_company_tonkm_compare_df(comp_name, base_offices):
         rows = []
         for off in base_offices:
@@ -1090,7 +1199,7 @@ with tabs[1]:
 
     st.markdown("---")
 
-    # 2) ③ トンキロ（t・km）比較表示
+    # 2) トンキロ（t・km）比較表示
     st.markdown("### 🚚 2. 各営業所の「現状」vs「案1〜案4」合計トンキロ（t・km）比較")
     col_tk1, col_tk2 = st.columns(2)
     with col_tk1:
