@@ -156,7 +156,6 @@ def calc_haversine_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return round(R * c * 1.2, 1)
 
-# ③ パターン文字列から対象の案番号（1〜4）を柔軟に分解取得する関数
 def parse_pattern_num(val):
     s = str(val).strip()
     res = []
@@ -189,16 +188,14 @@ except Exception as e:
     st.error("データの読み込みに失敗しました。J, T シートが含まれるExcelファイルであることを確認してください。")
     st.stop()
 
-# ① ファイル取り込み前のダウンロードボタン配置（アップロード完了直後に確実・安全出力）
+# ① 取り込み前のファイル事前ダウンロードボタンの設置（基本データ読込直後・安全に位置配置）
 st.sidebar.markdown("---")
 st.sidebar.header("📄 入力用Excelファイルの準備")
 st.sidebar.caption("設定変更や一括取り込みを行う前に、テンプレートや基本データを事前にダウンロードできます。")
 
-# ② 案1〜4すべての入力シート（「新規営業所一覧」「案1」「案2」「案3」「案4」）に現状参照営業所名をセットしたテンプレート生成関数
 def create_full_import_template(df_j_in, df_t_in):
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine='openpyxl') as t_writer:
-        # 新規営業所一覧（住所のみ入力の簡略化フォーマット）
         df_cust_sample = pd.DataFrame([
             {'対象パターン': '案1', '所在地住所': '大阪府茨木市駅前1-1-1'},
             {'対象パターン': '案2', '所在地住所': '大阪府堺市堺区南瓦町3-1'},
@@ -207,7 +204,6 @@ def create_full_import_template(df_j_in, df_t_in):
         ])
         df_cust_sample.to_excel(t_writer, sheet_name='新規営業所一覧', index=False)
         
-        # ② 案1〜案4シートにアップロードデータの現行参考営業所名をセット
         tmpl_rows = []
         for i in range(len(df_j_in)):
             code = df_j_in.loc[i, '市区町村コード']
@@ -221,7 +217,6 @@ def create_full_import_template(df_j_in, df_t_in):
             tmpl_rows.append({
                 '市町村コード': code,
                 '市町村名': city,
-                '配達方式': init_mode,
                 '市町村一括担当': 'なし',
                 '市町村一括担当営業所': '-',
                 'J社個別': off_j,
@@ -298,7 +293,6 @@ EXTRA_SEEDS = {
 def compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_indiv_off, wt_j_kg, wt_t_kg, office_info, municipal_coords):
     c_lat, c_lon = municipal_coords.get(city_name, (34.6853, 135.5208))
     
-    # ① 市町村一括担当が「なし」または未選択の場合は強制的に一括営業所を '-' にして安全処理
     if bulk_comp in ['なし', '-', 'nan', 'None', '']:
         bulk_off = '-'
 
@@ -317,7 +311,6 @@ def compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_in
             dist_j = 0.0
             dist_t = 0.0
     else:
-        # J社個別指定（未指定なら 0.0 km）
         if j_indiv_off != '-' and j_indiv_off is not None:
             j_coords = office_info.get(('J社', j_indiv_off), {}).get('coords')
             if not j_coords:
@@ -326,7 +319,6 @@ def compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_in
         else:
             dist_j = 0.0
             
-        # T社個別指定（未指定なら 0.0 km）
         if t_indiv_off != '-' and t_indiv_off is not None:
             t_coords = office_info.get(('T社', t_indiv_off), {}).get('coords')
             if not t_coords:
@@ -348,19 +340,16 @@ def build_initial_scenario_df(office_info_dict):
         wt_j_kg = df_j.loc[i, '配達重量\n(日当たり)']
         wt_t_kg = df_t.loc[i, '配達重量\n(日当たり)']
         off_j_def, off_t_def = df_j.loc[i, 'J社営業所名'], df_t.loc[i, 'T社営業所名']
-        sub_j = str(df_j.loc[i, 'J社外部委託地域']).strip() == '◯'
-        sub_t = str(df_t.loc[i, 'T社外部委託地域']).strip() == '◯'
         
         dist_j, tk_j, dist_t, tk_t = compute_distance_and_tonkm(city, 'なし', '-', off_j_def, off_t_def, wt_j_kg, wt_t_kg, office_info_dict, MUNICIPAL_HALL_COORDS)
-        init_mode = '委託配達' if (sub_j or sub_t) else '自社配達'
         
         rows.append({
-            '市町村コード': code, '市町村名': city, '配達方式': init_mode,
+            '市町村コード': code, '市町村名': city,
             '市町村一括担当': 'なし', '市町村一括担当営業所': '-',
             'J社個別': off_j_def, 'T社個別': off_t_def,
             'J社 距離(km)': dist_j, 'J社 配達重量(kg)': wt_j_kg, 'J社 トンキロ(t・km)': tk_j,
             'T社 距離(km)': dist_t, 'T社 配達重量(kg)': wt_t_kg, 'T社 トンキロ(t・km)': tk_t,
-            '_j_def_off': off_j_def, '_t_def_off': off_t_def, '_sub_j': sub_j, '_sub_t': sub_t
+            '_j_def_off': off_j_def, '_t_def_off': off_t_def
         })
     return pd.DataFrame(rows)
 
@@ -376,7 +365,6 @@ if imported_scenario_file is not None:
     try:
         xls_imp = pd.ExcelFile(imported_scenario_file)
         
-        # ③ 案1〜4すべての新規営業所・住所をパースして各案のsession_stateに追加
         if '新規営業所一覧' in xls_imp.sheet_names:
             df_imp_cust = pd.read_excel(xls_imp, sheet_name='新規営業所一覧')
             for _, c_row in df_imp_cust.iterrows():
@@ -404,7 +392,6 @@ if imported_scenario_file is not None:
                                 'company': 'T社', 'name': t_name_auto, 'address': c_addr, 'coords': coords
                             })
 
-        # ① & ③ 案1〜案4の受持設定の取り込みと最新距離計算
         for p_i in [1, 2, 3, 4]:
             sheet_target = f'案{p_i}'
             if sheet_target in xls_imp.sheet_names:
@@ -424,13 +411,11 @@ if imported_scenario_file is not None:
                     if len(match_idx) > 0:
                         i_target = match_idx[0]
                         
-                        b_mode = str(r_imp.get('配達方式', curr_p_df.loc[i_target, '配達方式'])).strip()
                         b_comp = str(r_imp.get('市町村一括担当', curr_p_df.loc[i_target, '市町村一括担当'])).strip()
                         b_off = str(r_imp.get('市町村一括担当営業所', '-')).strip()
                         j_ind = str(r_imp.get('J社個別', curr_p_df.loc[i_target, 'J社個別'])).strip()
                         t_ind = str(r_imp.get('T社個別', curr_p_df.loc[i_target, 'T社個別'])).strip()
                         
-                        # ① 一括担当が「なし」の場合は一括営業所を '-' に強制クリア
                         if b_comp in ['nan', 'None', '', 'なし', '-']:
                             b_comp = 'なし'
                             b_off = '-'
@@ -446,7 +431,6 @@ if imported_scenario_file is not None:
                         
                         dj, tkj, dt, tkt = compute_distance_and_tonkm(c_name, b_comp, b_off, j_ind, t_ind, wt_j, wt_t, p_off_info, MUNICIPAL_HALL_COORDS)
                         
-                        curr_p_df.at[i_target, '配達方式'] = b_mode
                         curr_p_df.at[i_target, '市町村一括担当'] = b_comp
                         curr_p_df.at[i_target, '市町村一括担当営業所'] = b_off
                         curr_p_df.at[i_target, 'J社個別'] = j_ind
@@ -465,7 +449,7 @@ if imported_scenario_file is not None:
 # 5. タブUI構成
 tab_names = [
     "📊 全体サマリー＆現状比較",
-    "🏢 会社別・営業所別集計",
+    "🏢 営業所別 配達重量集計",
     "📝 案1：受持選択（編集）",
     "📝 案2：受持選択（編集）",
     "📝 案3：受持選択（編集）",
@@ -477,8 +461,9 @@ pattern_active_records = {1: [], 2: [], 3: [], 4: []}
 pattern_map_status = {1: {}, 2: {}, 3: {}, 4: {}}
 pattern_map_images = {1: None, 2: None, 3: None, 4: None}
 
+# ③ タブ「案1」「案2」「案3」「案4」から「配達方式」列を削除
 display_cols = [
-    '市町村コード', '市町村名', '配達方式', '市町村一括担当', '市町村一括担当営業所',
+    '市町村コード', '市町村名', '市町村一括担当', '市町村一括担当営業所',
     'J社個別', 'T社個別',
     'J社 距離(km)', 'J社 配達重量(kg)', 'J社 トンキロ(t・km)',
     'T社 距離(km)', 'T社 配達重量(kg)', 'T社 トンキロ(t・km)'
@@ -500,7 +485,6 @@ for p_idx in [1, 2, 3, 4]:
         for cust in p_custom_offices:
             p_office_info[(cust['company'], cust['name'])] = {'address': cust['address'], 'coords': cust['coords']}
         
-        # ② 画面上での新規営業所登録フォーム（住所入力欄1つ、営業所名はJ社案X / T社案Xに自動固定）
         st.markdown(f"##### ➕ 案{p_idx} 専用 新規営業所の登録（J社案{p_idx} / T社案{p_idx} 一括登録）")
         col_addr_shared, col_btn_shared = st.columns([3, 1])
         with col_addr_shared:
@@ -534,11 +518,9 @@ for p_idx in [1, 2, 3, 4]:
         
         recalc_clicked = st.button(f"🔄 案{p_idx} の配達支店変更を反映", type="primary", key=f"btn_recalc_p{p_idx}", use_container_width=True)
 
-        # ② ドロップダウン選択肢（all_offices_p, j_offices_p, t_offices_p）に J社案X / T社案X が即時追加され選択可能
         edited_p_df = st.data_editor(
             curr_p_df[display_cols],
             column_config={
-                "配達方式": st.column_config.SelectboxColumn("配達方式", options=["自社配達", "委託配達"], required=True),
                 "市町村一括担当": st.column_config.SelectboxColumn("市町村一括担当", options=["なし", "J社", "T社"], required=True),
                 "市町村一括担当営業所": st.column_config.SelectboxColumn("市町村一括担当営業所", options=all_offices_p + ["-"], required=True),
                 "J社個別": st.column_config.SelectboxColumn("J社個別", options=j_offices_p + ["-"], required=True),
@@ -569,7 +551,6 @@ for p_idx in [1, 2, 3, 4]:
                 
                 dj, tkj, dt, tkt = compute_distance_and_tonkm(c_name, b_comp, b_off, j_ind, t_ind, wt_j, wt_t, p_office_info, MUNICIPAL_HALL_COORDS)
                 
-                curr_p_df.at[idx, '配達方式'] = r['配達方式']
                 curr_p_df.at[idx, '市町村一括担当'] = b_comp
                 curr_p_df.at[idx, '市町村一括担当営業所'] = b_off
                 curr_p_df.at[idx, 'J社個別'] = j_ind
@@ -589,7 +570,6 @@ for p_idx in [1, 2, 3, 4]:
             orig = curr_p_df.loc[idx]
             city_name = orig['市町村名']
             city_code = orig['市町村コード']
-            is_sub_mode = (r['配達方式'] == '委託配達')
             
             bulk_comp = r['市町村一括担当']
             bulk_off = r['市町村一括担当営業所']
@@ -627,35 +607,28 @@ for p_idx in [1, 2, 3, 4]:
             has_indiv = (j_indiv_off != '-') or (t_indiv_off != '-')
             if has_indiv:
                 if j_indiv_off != '-':
-                    sub = is_sub_mode or orig['_sub_j']
                     p_active.append({
                         '市区町村コード': city_code, '市区町村名': city_name,
-                        '担当会社': 'J社', '会社表示': 'J社（委託）' if sub else 'J社',
-                        '担当営業所': j_indiv_off, '営業所表示': j_indiv_off + ('（委託）' if sub else ''),
+                        '担当会社': 'J社', '担当営業所': j_indiv_off,
                         '重量_t': wt_j_t, '距離_km': dist_j, 'トンキロ': tk_j,
                     })
                 if t_indiv_off != '-':
-                    sub = is_sub_mode or orig['_sub_t']
                     p_active.append({
                         '市区町村コード': city_code, '市区町村名': city_name,
-                        '担当会社': 'T社', '会社表示': 'T社（委託）' if sub else 'T社',
-                        '担当営業所': t_indiv_off, '営業所表示': t_indiv_off + ('（委託）' if sub else ''),
+                        '担当会社': 'T社', '担当営業所': t_indiv_off,
                         '重量_t': wt_t_t, '距離_km': dist_t, 'トンキロ': tk_t,
                     })
             else:
                 if bulk_comp in ['J社', 'T社']:
                     assigned_off = bulk_off if bulk_off != '-' else (orig['_j_def_off'] if bulk_comp == 'J社' else orig['_t_def_off'])
                     c_code = bulk_comp[0]
-                    sub = is_sub_mode or (orig['_sub_j'] if c_code == 'J' else orig['_sub_t'])
-                    
                     total_wt = wt_j_t + wt_t_t
                     avg_dist = dist_j if c_code == 'J' else dist_t
                     total_tk = round(avg_dist * total_wt, 2)
                     
                     p_active.append({
                         '市区町村コード': city_code, '市区町村名': city_name,
-                        '担当会社': bulk_comp, '会社表示': bulk_comp + ('（委託）' if sub else ''),
-                        '担当営業所': assigned_off, '営業所表示': assigned_off + ('（委託）' if sub else ''),
+                        '担当会社': bulk_comp, '担当営業所': assigned_off,
                         '重量_t': total_wt, '距離_km': avg_dist, 'トンキロ': total_tk,
                     })
 
@@ -719,9 +692,9 @@ for p_idx in [1, 2, 3, 4]:
                 elif bulk == 'T社' and bulk_off in t_color_map_p:
                     fill_rgb = t_color_map_p[bulk_off]
                 elif bulk in ['なし', '-'] and ((j_indiv_off != '-') or (t_indiv_off != '-')):
-                    fill_rgb = (200, 200, 200) # 個別選択あり＝灰色
+                    fill_rgb = (200, 200, 200)
                 else:
-                    fill_rgb = (255, 255, 255) # 未設定＝白色
+                    fill_rgb = (255, 255, 255)
 
                 target_coords = [(sx, sy)]
                 if c_name in EXTRA_SEEDS:
@@ -978,44 +951,85 @@ with tabs[0]:
         use_container_width=True, hide_index=True
     )
 
-# タブ2: 会社別 ＆ 営業所別 詳細集計（案1〜案4から選択可能）
+# タブ2: ② 営業所別 配達重量（t）一括比較集計画面
 with tabs[1]:
-    st.subheader("🏢 会社別 ＆ 🏬 営業所別 詳細集計")
-    selected_p = st.selectbox("集計表示する変更案を選択", [1, 2, 3, 4], format_func=lambda x: f"案{x}")
+    st.subheader("🏬 各営業所の「現状」vs「案1〜案4」合計配達重量（t）比較集計")
+    st.caption("全営業所における「現状」および各変更案（案1〜案4）での合計配達重量（t）を横並びで一括比較します。")
     
-    p_act = pattern_active_records[selected_p]
-    p_act_df = pd.DataFrame(p_act) if len(p_act) > 0 else pd.DataFrame()
-    
-    if not p_act_df.empty:
-        st.markdown(f"#### 🏢 案{selected_p} 会社別 集計（自社配達 vs 外部委託）")
-        comp_sub_summary = p_act_df.groupby(['会社表示']).agg(
-            担当件数=('市区町村コード', 'count'),
-            合計配達重量_t=('重量_t', 'sum'),
-            平均配送距離_km=('距離_km', 'mean'),
-            合計トンキロ=('トンキロ', 'sum')
-        ).reset_index().rename(columns={'会社表示': '会社区分'})
-        
-        st.dataframe(
-            comp_sub_summary.style.format({
-                '合計配達重量_t': '{:,.2f}', '平均配送距離_km': '{:.2f}', '合計トンキロ': '{:,.2f}'
-            }),
-            use_container_width=True, hide_index=True
-        )
-        
-        st.markdown("---")
-        st.markdown(f"#### 🏬 案{selected_p} 営業所別 集計（自社配達 vs 外部委託）")
-        off_sub_summary = p_act_df.groupby(['担当会社', '営業所表示']).agg(
-            担当件数=('市区町村コード', 'count'),
-            合計配達重量_t=('重量_t', 'sum'),
-            平均配送距離_km=('距離_km', 'mean'),
-            合計トンキロ=('トンキロ', 'sum')
-        ).reset_index().rename(columns={'担当会社': '会社', '営業所表示': '営業所区分'})
-        
-        st.dataframe(
-            off_sub_summary.style.format({
-                '合計配達重量_t': '{:,.2f}', '平均配送距離_km': '{:.2f}', '合計トンキロ': '{:,.2f}'
-            }),
-            use_container_width=True, hide_index=True
-        )
-    else:
-        st.info(f"案{selected_p} の割り当てデータがありません。")
+    # 全営業所マスターリスト収集
+    all_j_offs = set(df_j['J社営業所名'].dropna().astype(str).tolist())
+    all_t_offs = set(df_t['T社営業所名'].dropna().astype(str).tolist())
+    for p_i in [1, 2, 3, 4]:
+        for cust in st.session_state[f"custom_offices_p{p_i}"]:
+            if cust['company'] == 'J社': all_j_offs.add(cust['name'])
+            if cust['company'] == 'T社': all_t_offs.add(cust['name'])
+
+    office_summary_rows = []
+
+    # 各営業所のパターン別重量計算関数
+    def get_office_weights_dict(p_df_in):
+        w_dict = {}
+        for _, r_item in p_df_in.iterrows():
+            bulk = str(r_item['市町村一括担当']).strip()
+            bulk_off = str(r_item['市町村一括担当営業所']).strip()
+            j_ind = str(r_item['J社個別']).strip()
+            t_ind = str(r_item['T社個別']).strip()
+            
+            wt_j = float(r_item['J社 配達重量(kg)']) / 1000.0
+            wt_t = float(r_item['T社 配達重量(kg)']) / 1000.0
+            
+            if bulk in ['J社', 'T社']:
+                key = (bulk, bulk_off)
+                w_dict[key] = w_dict.get(key, 0.0) + (wt_j + wt_t)
+            else:
+                if j_ind != '-':
+                    key = ('J社', j_ind)
+                    w_dict[key] = w_dict.get(key, 0.0) + wt_j
+                if t_ind != '-':
+                    key = ('T社', t_ind)
+                    w_dict[key] = w_dict.get(key, 0.0) + wt_t
+        return w_dict
+
+    # パターン別重量マップ事前抽出
+    cur_w_map = get_office_weights_dict(build_initial_scenario_df(EXISTING_OFFICES_INFO))
+    p1_w_map = get_office_weights_dict(st.session_state["table_data_p1"])
+    p2_w_map = get_office_weights_dict(st.session_state["table_data_p2"])
+    p3_w_map = get_office_weights_dict(st.session_state["table_data_p3"])
+    p4_w_map = get_office_weights_dict(st.session_state["table_data_p4"])
+
+    # J社 営業所一覧行構築
+    for j_off in sorted(list(all_j_offs)):
+        office_summary_rows.append({
+            '担当会社': 'J社',
+            '営業所名': j_off,
+            '現状_配達重量_t': round(cur_w_map.get(('J社', j_off), 0.0), 2),
+            '案1_配達重量_t': round(p1_w_map.get(('J社', j_off), 0.0), 2),
+            '案2_配達重量_t': round(p2_w_map.get(('J社', j_off), 0.0), 2),
+            '案3_配達重量_t': round(p3_w_map.get(('J社', j_off), 0.0), 2),
+            '案4_配達重量_t': round(p4_w_map.get(('J社', j_off), 0.0), 2),
+        })
+
+    # T社 営業所一覧行構築
+    for t_off in sorted(list(all_t_offs)):
+        office_summary_rows.append({
+            '担当会社': 'T社',
+            '営業所名': t_off,
+            '現状_配達重量_t': round(cur_w_map.get(('T社', t_off), 0.0), 2),
+            '案1_配達重量_t': round(p1_w_map.get(('T社', t_off), 0.0), 2),
+            '案2_配達重量_t': round(p2_w_map.get(('T社', t_off), 0.0), 2),
+            '案3_配達重量_t': round(p3_w_map.get(('T社', t_off), 0.0), 2),
+            '案4_配達重量_t': round(p4_w_map.get(('T社', t_off), 0.0), 2),
+        })
+
+    df_off_weight_compare = pd.DataFrame(office_summary_rows)
+
+    st.dataframe(
+        df_off_weight_compare.style.format({
+            '現状_配達重量_t': '{:,.2f}',
+            '案1_配達重量_t': '{:,.2f}',
+            '案2_配達重量_t': '{:,.2f}',
+            '案3_配達重量_t': '{:,.2f}',
+            '案4_配達重量_t': '{:,.2f}'
+        }),
+        use_container_width=True, hide_index=True
+    )
