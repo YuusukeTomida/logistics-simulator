@@ -19,27 +19,6 @@ st.set_page_config(
 st.title("🚚 運送2社 営業所受持エリア・トンキロ最適化シミュレーター（大阪府版）")
 st.caption("大阪府の市区町村別・会社別の受持選択を行い、「現状」と「4つの改正案」のトンキロ・配達重量の変化を一括比較・シミュレーションします。")
 
-# 2. 基本データファイルアップロード
-st.sidebar.header("📁 基本データ読み込み")
-uploaded_file = st.sidebar.file_uploader("「営業所受持地域.xlsx」をドラッグ＆ドロップ", type=["xlsx"], key="base_excel_uploader")
-
-if uploaded_file is None:
-    st.info("👈 左側のサイドバーから「営業所受持地域.xlsx」をアップロードしてシミュレーションを開始してください。")
-    st.stop()
-
-@st.cache_data
-def load_data(file):
-    xls = pd.ExcelFile(file)
-    df_j = pd.read_excel(xls, sheet_name='J')
-    df_t = pd.read_excel(xls, sheet_name='T')
-    return df_j, df_t
-
-try:
-    df_j, df_t = load_data(uploaded_file)
-except Exception as e:
-    st.error("データの読み込みに失敗しました。J, T シートが含まれるExcelファイルであることを確認してください。")
-    st.stop()
-
 # 3. 役所・役場座標 ＆ 営業所初期座標定義
 MUNICIPAL_HALL_COORDS = {
     '大阪市都島区': (34.7011, 135.5303), '大阪市福島区': (34.6922, 135.4727), '大阪市此花区': (34.6853, 135.4619),
@@ -177,45 +156,36 @@ def calc_haversine_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return round(R * c * 1.2, 1)
 
-# ① 取り込み前のファイル事前ダウンロードボタンの設置（基本データ読込直後・安全に位置配置）
+# ① 取り込み前のファイル事前ダウンロードボタンの設置（基本データ読込の「前」でも利用可能）
 st.sidebar.markdown("---")
 st.sidebar.header("📄 入力用Excelファイルの準備")
 st.sidebar.caption("設定変更や一括取り込みを行う前に、テンプレートや基本データを事前ダウンロードできます。")
 
-# 案1〜4すべての入力シート（「新規営業所一覧」「案1」「案2」「案3」「案4」）を備えたテンプレート生成関数
-def create_full_import_template(df_j_in, df_t_in):
+# ④ 案1〜4すべての入力シート（「新規営業所一覧」「案1」「案2」「案3」「案4」）を備えたテンプレート生成関数
+def create_full_import_template():
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine='openpyxl') as t_writer:
+        # ③ 所在地住所の入力欄を1つにし、担当会社・新規営業所名を固定化
         df_cust_sample = pd.DataFrame([
-            {'対象パターン': '案1', '担当会社': 'J社', '新規営業所名': 'J社案1', '所在地住所': '大阪府茨木市駅前1-1-1'},
-            {'対象パターン': '案1', '担当会社': 'T社', '新規営業所名': 'T社案1', '所在地住所': '大阪府茨木市駅前1-1-1'},
-            {'対象パターン': '案2', '担当会社': 'J社', '新規営業所名': 'J社案2', '所在地住所': '大阪府堺市堺区南瓦町3-1'},
-            {'対象パターン': '案2', '担当会社': 'T社', '新規営業所名': 'T社案2', '所在地住所': '大阪府堺市堺区南瓦町3-1'},
-            {'対象パターン': '案3', '担当会社': 'J社', '新規営業所名': 'J社案3', '所在地住所': '大阪府東大阪市荒本北1-1-1'},
-            {'対象パターン': '案3', '担当会社': 'T社', '新規営業所名': 'T社案3', '所在地住所': '大阪府東大阪市荒本北1-1-1'},
-            {'対象パターン': '案4', '担当会社': 'J社', '新規営業所名': 'J社案4', '所在地住所': '大阪府岸和田市岸城町7-1'},
-            {'対象パターン': '案4', '担当会社': 'T社', '新規営業所名': 'T社案4', '所在地住所': '大阪府岸和田市岸城町7-1'},
+            {'対象パターン': '案1', '所在地住所': '大阪府茨木市駅前1-1-1'},
+            {'対象パターン': '案2', '所在地住所': '大阪府堺市堺区南瓦町3-1'},
+            {'対象パターン': '案3', '所在地住所': '大阪府東大阪市荒本北1-1-1'},
+            {'対象パターン': '案4', '所在地住所': '大阪府岸和田市岸城町7-1'},
         ])
         df_cust_sample.to_excel(t_writer, sheet_name='新規営業所一覧', index=False)
         
+        # 案1〜案4の標準市町村枠（ローカルまたは標準マスタ生成）
+        base_cities = list(MUNICIPAL_HALL_COORDS.keys())
         tmpl_rows = []
-        for i in range(len(df_j_in)):
-            code = df_j_in.loc[i, '市区町村コード']
-            city = df_j_in.loc[i, '市区町村名\n（漢字）']
-            off_j = df_j_in.loc[i, 'J社営業所名']
-            off_t = df_t_in.loc[i, 'T社営業所名']
-            sub_j = str(df_j_in.loc[i, 'J社外部委託地域']).strip() == '◯'
-            sub_t = str(df_t_in.loc[i, 'T社外部委託地域']).strip() == '◯'
-            init_mode = '委託配達' if (sub_j or sub_t) else '自社配達'
-            
+        for idx_c, city_item in enumerate(base_cities):
             tmpl_rows.append({
-                '市町村コード': code,
-                '市町村名': city,
-                '配達方式': init_mode,
+                '市町村コード': 270000 + idx_c,
+                '市町村名': city_item,
+                '配達方式': '自社配達',
                 '市町村一括担当': 'なし',
                 '市町村一括担当営業所': '-',
-                'J社個別': off_j,
-                'T社個別': off_t
+                'J社個別': '大阪',
+                'T社個別': '大阪中央'
             })
         df_tmpl_base = pd.DataFrame(tmpl_rows)
         for p_i in [1, 2, 3, 4]:
@@ -225,14 +195,34 @@ def create_full_import_template(df_j_in, df_t_in):
 
 st.sidebar.download_button(
     label="📄 一括取り込み用Excelテンプレートをダウンロード（案1〜4全シート付き）",
-    data=create_full_import_template(df_j, df_t),
+    data=create_full_import_template(),
     file_name="変更案設定_一括取り込み用テンプレート.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     use_container_width=True
 )
 
 st.sidebar.markdown("---")
-st.sidebar.header("📥 変更案設定Excelを取り込み")
+
+# 2. 基本データファイルアップロード
+st.sidebar.header("📁 基本データ読み込み")
+uploaded_file = st.sidebar.file_uploader("「営業所受持地域.xlsx」をドラッグ＆ドロップ", type=["xlsx"], key="base_excel_uploader")
+
+if uploaded_file is None:
+    st.info("👈 左側のサイドバーから「営業所受持地域.xlsx」をアップロードしてシミュレーションを開始してください。")
+    st.stop()
+
+@st.cache_data
+def load_data(file):
+    xls = pd.ExcelFile(file)
+    df_j = pd.read_excel(xls, sheet_name='J')
+    df_t = pd.read_excel(xls, sheet_name='T')
+    return df_j, df_t
+
+try:
+    df_j, df_t = load_data(uploaded_file)
+except Exception as e:
+    st.error("データの読み込みに失敗しました。J, T シートが含まれるExcelファイルであることを確認してください。")
+    st.stop()
 
 # 新規営業所の登録状態をパターン別に完全分離管理（custom_offices_p1 〜 custom_offices_p4）
 for p_idx in [1, 2, 3, 4]:
@@ -288,6 +278,7 @@ EXTRA_SEEDS = {
 def compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_indiv_off, wt_j_kg, wt_t_kg, office_info, municipal_coords):
     c_lat, c_lon = municipal_coords.get(city_name, (34.6853, 135.5208))
     
+    # 一括担当営業所が指定されている場合は単一座標から同一距離を算出
     if bulk_off != '-' and bulk_off is not None:
         c_prefix = bulk_comp if bulk_comp in ['J社', 'T社'] else 'J社'
         coords = office_info.get((c_prefix, bulk_off), {}).get('coords')
@@ -303,6 +294,7 @@ def compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_in
             dist_j = 0.0
             dist_t = 0.0
     else:
+        # J社個別指定（未指定なら 0.0 km）
         if j_indiv_off != '-' and j_indiv_off is not None:
             j_coords = office_info.get(('J社', j_indiv_off), {}).get('coords')
             if not j_coords:
@@ -311,6 +303,7 @@ def compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_in
         else:
             dist_j = 0.0
             
+        # T社個別指定（未指定なら 0.0 km）
         if t_indiv_off != '-' and t_indiv_off is not None:
             t_coords = office_info.get(('T社', t_indiv_off), {}).get('coords')
             if not t_coords:
@@ -354,6 +347,9 @@ for p_idx in [1, 2, 3, 4]:
         st.session_state[key_name] = build_initial_scenario_df(EXISTING_OFFICES_INFO).copy(deep=True)
 
 # 変更案設定Excelファイルの取り込み処理
+st.sidebar.header("📥 変更案設定Excelを取り込み")
+st.sidebar.caption("あらかじめ作成した設定Excelを取り込み、案1〜4の設定を一括反映します。")
+
 imported_scenario_file = st.sidebar.file_uploader("変更案設定Excelを選択 (案1〜4)", type=["xlsx"], key="scenario_excel_uploader")
 
 if imported_scenario_file is not None:
@@ -370,18 +366,24 @@ if imported_scenario_file is not None:
                 elif '3' in p_str or '３' in p_str: p_num = 3
                 elif '4' in p_str or '４' in p_str: p_num = 4
                 
-                if p_num and '担当会社' in c_row and '新規営業所名' in c_row and '所在地住所' in c_row:
-                    comp = str(c_row['担当会社']).strip()
-                    c_name = str(c_row['新規営業所名']).strip()
-                    c_addr = str(c_row['所在地住所']).strip()
+                c_addr = str(c_row.get('所在地住所', '')).strip()
+                
+                if p_num and c_addr:
+                    coords = geocode_address_precise(c_addr)
                     
-                    if c_name and c_addr:
-                        coords = geocode_address_precise(c_addr)
-                        existing_names = [x['name'] for x in st.session_state[f"custom_offices_p{p_num}"]]
-                        if c_name not in existing_names:
-                            st.session_state[f"custom_offices_p{p_num}"].append({
-                                'company': comp, 'name': c_name, 'address': c_addr, 'coords': coords
-                            })
+                    j_name_auto = f"J社案{p_num}"
+                    t_name_auto = f"T社案{p_num}"
+                    
+                    existing_names = [x['name'] for x in st.session_state[f"custom_offices_p{p_num}"]]
+                    
+                    if j_name_auto not in existing_names:
+                        st.session_state[f"custom_offices_p{p_num}"].append({
+                            'company': 'J社', 'name': j_name_auto, 'address': c_addr, 'coords': coords
+                        })
+                    if t_name_auto not in existing_names:
+                        st.session_state[f"custom_offices_p{p_num}"].append({
+                            'company': 'T社', 'name': t_name_auto, 'address': c_addr, 'coords': coords
+                        })
 
         for p_i in [1, 2, 3, 4]:
             sheet_target = f'案{p_i}'
@@ -774,7 +776,7 @@ with tabs[0]:
                 t_tk_sum += (j_tk + t_tk)
                 t_wt_sum += (j_wt + t_wt)
                 t_cnt += 1
-            else: # 'なし' または '-'
+            else:
                 j_tk_sum += j_tk
                 j_wt_sum += j_wt
                 if j_tk > 0 or str(r['J社個別']).strip() != '-':
