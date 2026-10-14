@@ -742,10 +742,10 @@ for p_idx in [1, 2, 3, 4]:
             with map_col2:
                 st.image(cropped_img, width=600)
 
-# タブ1: 全体サマリー ＆ 現状 vs 4つの変更案比較（② 「J社＋T社 全体合計」の配達重量（t）比較の追加）
+# タブ1: 全体サマリー ＆ 現状 vs 4つの変更案比較
 with tabs[0]:
     st.subheader("📈 会社毎の「現状」vs「4つの変更案（案1〜案4）」一括比較サマリー")
-    st.caption("J社・T社個別の数値に加え、運送2社全体の合計トンキロ・配達重量（t）・削減率を一括比較します。")
+    st.caption("J社・T社個別の数値に加え、運送2社全体の合計トンキロ・削減率を一括比較します。")
 
     base_0_df = build_initial_scenario_df(EXISTING_OFFICES_INFO)
     
@@ -853,7 +853,7 @@ with tabs[0]:
 
     comb_summary_df = pd.DataFrame(comb_summary_rows)
 
-    # ① 添付ファイル『【書式】大阪府配達エリア最適化シミュレーション_全体比較結果.xlsx』と完全同仕様のExcel出力作成
+    # ① 出力ファイルに「現状」シートを新設し、案1〜4と同様の完全同一フォーマットで出力
     excel_full_bytes = io.BytesIO()
     with pd.ExcelWriter(excel_full_bytes, engine='openpyxl') as writer:
         all_cust_rows = []
@@ -872,57 +872,60 @@ with tabs[0]:
             df_cust_all = pd.DataFrame(columns=['対象パターン', '担当会社', '新規営業所名', '所在地住所'])
         df_cust_all.to_excel(writer, sheet_name='新規営業所一覧', index=False)
 
+        # ① 「現状」シートを最初に出力
+        df_cur_export = base_0_df[display_cols].copy()
+        df_cur_export.to_excel(writer, sheet_name='現状', index=False)
+
+        # 案1〜案4のシート出力
         for p_i in [1, 2, 3, 4]:
             p_df_export = st.session_state[f"table_data_p{p_i}"][display_cols].copy()
             p_df_export.to_excel(writer, sheet_name=f'案{p_i}', index=False)
 
         wb = writer.book
 
-        # ① 書式スタイル適用処理（ヘッダー背景色: #C00000, 白文字, 枠線）
+        # ① 書式スタイル適用処理（「現状」および「案1〜4」の全シートで同一フォーマット装飾）
         hdr_font = Font(name='BIZ UDPゴシック', size=11, bold=False, color='FFFFFF')
         hdr_fill = PatternFill(start_color='C00000', end_color='C00000', fill_type='solid')
         data_font = Font(name='BIZ UDPゴシック', size=11, bold=False)
         border_thin = Border(left=Side(style='thin', color='D9D9D9'), right=Side(style='thin', color='D9D9D9'), top=Side(style='thin', color='D9D9D9'), bottom=Side(style='thin', color='D9D9D9'))
 
-        for sheet_name in ['新規営業所一覧', '案1', '案2', '案3', '案4']:
+        for sheet_name in ['新規営業所一覧', '現状', '案1', '案2', '案3', '案4']:
             if sheet_name in wb.sheetnames:
                 ws = wb[sheet_name]
                 ws.views.sheetView[0].showGridLines = True
                 
-                # ヘッダー行装飾
                 for cell in ws[1]:
                     cell.font = hdr_font
                     cell.fill = hdr_fill
                     cell.alignment = Alignment(horizontal='center', vertical='center')
                     cell.border = border_thin
                 
-                # データ行装飾
                 for row in ws.iter_rows(min_row=2):
                     for cell in row:
                         cell.font = data_font
                         cell.border = border_thin
 
-        # 列幅設定（添付書式完全対応）
         ws_cust = wb['新規営業所一覧']
         ws_cust.column_dimensions['A'].width = 13.5
         ws_cust.column_dimensions['B'].width = 9.6
         ws_cust.column_dimensions['C'].width = 13.9
         ws_cust.column_dimensions['D'].width = 37.5
 
-        for p_i in [1, 2, 3, 4]:
-            ws_p = wb[f'案{p_i}']
-            ws_p.column_dimensions['A'].width = 12.5
-            ws_p.column_dimensions['B'].width = 16.1
-            ws_p.column_dimensions['C'].width = 14.0
-            ws_p.column_dimensions['D'].width = 22.2
-            ws_p.column_dimensions['E'].width = 12.7
-            ws_p.column_dimensions['F'].width = 12.7
-            ws_p.column_dimensions['G'].width = 14.9
-            ws_p.column_dimensions['H'].width = 18.6
-            ws_p.column_dimensions['I'].width = 20.4
-            ws_p.column_dimensions['J'].width = 15.2
-            ws_p.column_dimensions['K'].width = 18.9
-            ws_p.column_dimensions['L'].width = 20.6
+        for sheet_item in ['現状', '案1', '案2', '案3', '案4']:
+            if sheet_item in wb.sheetnames:
+                ws_p = wb[sheet_item]
+                ws_p.column_dimensions['A'].width = 12.5
+                ws_p.column_dimensions['B'].width = 16.1
+                ws_p.column_dimensions['C'].width = 14.0
+                ws_p.column_dimensions['D'].width = 22.2
+                ws_p.column_dimensions['E'].width = 12.7
+                ws_p.column_dimensions['F'].width = 12.7
+                ws_p.column_dimensions['G'].width = 14.9
+                ws_p.column_dimensions['H'].width = 18.6
+                ws_p.column_dimensions['I'].width = 20.4
+                ws_p.column_dimensions['J'].width = 15.2
+                ws_p.column_dimensions['K'].width = 18.9
+                ws_p.column_dimensions['L'].width = 20.6
 
         # シート「白地図エリアマップ」生成（添付書式レイアウト対応）
         ws_map = wb.create_sheet(title="白地図エリアマップ")
@@ -954,7 +957,6 @@ with tabs[0]:
                 cell_item.font = data_font
                 cell_item.border = border_thin
 
-        # ① 添付書式通りの配置位置マッピング（B12, E12, M12, X12）
         map_cell_positions = {
             1: ('B', 12, 13),   # 案1: B12タイトル, B13画像
             2: ('E', 12, 13),   # 案2: E12タイトル, E13画像
@@ -987,7 +989,7 @@ with tabs[0]:
         ws_map.column_dimensions['F'].width = 17.0
 
     st.download_button(
-        label="📥 全体シミュレーション＆4案一括データ（白地図比較表・新規営業所併記）Excel出力",
+        label="📥 全体シミュレーション＆4案一括データ（現状・白地図比較表・新規営業所併記）Excel出力",
         data=excel_full_bytes.getvalue(),
         file_name="大阪府配達エリア最適化シミュレーション_全体比較結果.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -996,8 +998,8 @@ with tabs[0]:
     )
 
     st.markdown("---")
-    # 1) J社＋T社「全体合計」トンキロ比較メトリック
-    st.markdown("### 🚚 1. J社 ＋ T社 全体合計：現状 vs 4案のトンキロ比較")
+    # J社＋T社「全体合計」トンキロ比較メトリック
+    st.markdown("### 🚚 J社 ＋ T社 全体合計：現状 vs 4案のトンキロ比較")
     cols_comb = st.columns(5)
     for idx, col in enumerate(cols_comb):
         row_c = comb_summary_df.iloc[idx]
@@ -1018,30 +1020,6 @@ with tabs[0]:
             st.markdown(f"#### {row_c['パターン']}")
             st.metric("合計トンキロ", "{:,.1f} ton-km".format(row_c['合計_トンキロ']), delta=delta_label)
             st.caption(f"J社: {row_c['J社_トンキロ']:,.1f} ton-km / T社: {row_c['T社_トンキロ']:,.1f} ton-km")
-
-    st.markdown("---")
-    # ② リクエスト②「J社 ＋ T社 全体合計：現状 vs 4案の比較」の配達重量（t）版の追加
-    st.markdown("### 📦 2. J社 ＋ T社 全体合計：現状 vs 4案の配達重量（t）比較")
-    cols_comb_wt = st.columns(5)
-    for idx, col in enumerate(cols_comb_wt):
-        row_cw = comb_summary_df.iloc[idx]
-        diff_w = row_cw['重量_削減量_t']
-        pct_w = row_cw['重量_削減率(%)']
-        
-        if idx == 0:
-            delta_wt_label = None
-        else:
-            if diff_w >= 0:
-                delta_wt_label = f"削減: {diff_w:,.1f} t ({pct_w:+.1f}%)"
-            else:
-                inc_w_val = abs(diff_w)
-                inc_w_pct = abs(pct_w)
-                delta_wt_label = f"増加: +{inc_w_val:,.1f} t (+{inc_w_pct:.1f}%)"
-
-        with col:
-            st.markdown(f"#### {row_cw['パターン']}")
-            st.metric("合計配達重量", "{:,.1f} t".format(row_cw['合計_配達重量_t']), delta=delta_wt_label)
-            st.caption(f"J社: {row_cw['J社_配達重量_t']:,.1f} t / T社: {row_cw['T社_配達重量_t']:,.1f} t")
 
     st.markdown("---")
     st.write("### 📊 全パターン比較対比表（会社別）")
