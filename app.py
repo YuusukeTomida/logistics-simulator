@@ -288,7 +288,7 @@ CITY_SEEDS = {
     '柏原市': (881, 837), '松原市': (723, 842), '藤井寺市': (817, 853), '羽曳野市': (811, 911), '太子町': (890, 962),
     '富田林市': (811, 1011), '大阪狭山市': (724, 1011), '河南町': (866, 1011), '千早赤阪村': (881, 1104),
     '河内長野市': (743, 1147), '堺市堺区': (607, 848), '堺市北区': (665, 850), '堺市西区': (565, 930),
-    '堺市中区': (640, 930), '堺市東区': (682, 911), '堺市美原区': (754, 932), '堺市南区': (641, 1011),
+    '堺市中区': (34.5369, 135.4967), '堺市東区': (34.5328, 135.5222),
     '高石市': (535, 930), '泉大津市': (504, 1000), '忠岡町': (504, 1011), '和泉市': (565, 1096),
     '岸和田市': (504, 1179), '貝塚市': (494, 1220), '熊取町': (426, 1179), '泉佐野市': (370, 1179),
     '田尻町': (308, 1187), '泉南市': (318, 1251), '阪南市': (239, 1280), '岬町': (118, 1336)
@@ -368,11 +368,11 @@ for p_idx in [1, 2, 3, 4]:
     if key_name not in st.session_state:
         st.session_state[key_name] = build_initial_scenario_df(EXISTING_OFFICES_INFO).copy(deep=True)
 
-# 全体トンキロ最小化の最適解自動算出エンジン
+# ④ & ⑤ 条件（T社廃止拠点＝「東大阪」固定、現状が「委託」エリアは変更不可）を組み込んだ全体最適化エンジン
 @st.cache_data
 def solve_optimal_scenario_cached(df_j_in, df_t_in):
     j_existing_list = [k[1] for k in EXISTING_OFFICES_INFO.keys() if k[0] == 'J社']
-    t_existing_list = [k[1] for k in EXISTING_OFFICES_INFO.keys() if k[0] == 'T社']
+    t_close_fixed = '東大阪' # ④ T社廃止拠点＝「東大阪」に固定
     
     best_total_tk = float('inf')
     best_config = None
@@ -383,32 +383,63 @@ def solve_optimal_scenario_cached(df_j_in, df_t_in):
         c_code = df_j_in.loc[i, '市区町村コード']
         wt_j = df_j_in.loc[i, '配達重量\n(日当たり)']
         wt_t = df_t_in.loc[i, '配達重量\n(日当たり)']
+        off_j_def = str(df_j_in.loc[i, 'J社営業所名']).strip()
+        off_t_def = str(df_t_in.loc[i, 'T社営業所名']).strip()
+        
+        # ⑤ 現状の担当営業所に「委託」が含まれる場合は変更しない
+        is_j_sub = ('委託' in off_j_def) or (str(df_j_in.loc[i, 'J社外部委託地域']).strip() == '◯' if 'J社外部委託地域' in df_j_in.columns else False)
+        is_t_sub = ('委託' in off_t_def) or (str(df_t_in.loc[i, 'T社外部委託地域']).strip() == '◯' if 'T社外部委託地域' in df_t_in.columns else False)
+        is_sub = is_j_sub or is_t_sub
+        
         c_lat, c_lon = MUNICIPAL_HALL_COORDS.get(c_name, (34.6853, 135.5208))
         cities.append({
             'code': c_code, 'name': c_name, 'wt_j': wt_j, 'wt_t': wt_t,
             'lat': c_lat, 'lon': c_lon,
-            'orig_j': df_j_in.loc[i, 'J社営業所名'],
-            'orig_t': df_t_in.loc[i, 'T社営業所名']
+            'orig_j': off_j_def, 'orig_t': off_t_def,
+            'is_sub': is_sub
         })
 
     for candidate_city, cand_coords in MUNICIPAL_HALL_COORDS.items():
         for j_close in j_existing_list:
-            for t_close in t_existing_list:
+            
+            active_j_offices = {k[1]: v['coords'] for k, v in EXISTING_OFFICES_INFO.items() if k[0] == 'J社' and k[1] != j_close}
+            active_j_offices['J社最適'] = cand_coords
+            
+            active_t_offices = {k[1]: v['coords'] for k, v in EXISTING_OFFICES_INFO.items() if k[0] == 'T社' and k[1] != t_close_fixed}
+            active_t_offices['T社最適'] = cand_coords
+            
+            total_tk = 0.0
+            city_assignments = []
+            
+            for c_item in cities:
+                c_lat, c_lon = c_item['lat'], c_item['lon']
+                wt_j_ton = c_item['wt_j'] / 1000.0
+                wt_t_ton = c_item['wt_t'] / 1000.0
                 
-                active_j_offices = {k[1]: v['coords'] for k, v in EXISTING_OFFICES_INFO.items() if k[0] == 'J社' and k[1] != j_close}
-                active_j_offices['J社最適'] = cand_coords
-                
-                active_t_offices = {k[1]: v['coords'] for k, v in EXISTING_OFFICES_INFO.items() if k[0] == 'T社' and k[1] != t_close}
-                active_t_offices['T社最適'] = cand_coords
-                
-                total_tk = 0.0
-                city_assignments = []
-                
-                for c_item in cities:
-                    c_lat, c_lon = c_item['lat'], c_item['lon']
-                    wt_j_ton = c_item['wt_j'] / 1000.0
-                    wt_t_ton = c_item['wt_t'] / 1000.0
+                # ⑤ 委託エリアの場合は現状の割り当てを固定
+                if c_item['is_sub']:
+                    orig_j_clean = c_item['orig_j'].replace('(委託)', '').strip()
+                    orig_t_clean = c_item['orig_t'].replace('(委託)', '').strip()
                     
+                    j_coords = active_j_offices.get(orig_j_clean, EXISTING_OFFICES_INFO.get(('J社', orig_j_clean), {}).get('coords', (c_lat, c_lon)))
+                    t_coords = active_t_offices.get(orig_t_clean, EXISTING_OFFICES_INFO.get(('T社', orig_t_clean), {}).get('coords', (c_lat, c_lon)))
+                    
+                    dj = calc_haversine_distance(j_coords[0], j_coords[1], c_lat, c_lon) if j_coords else 0.0
+                    dt = calc_haversine_distance(t_coords[0], t_coords[1], c_lat, c_lon) if t_coords else 0.0
+                    
+                    tk_j_c = round(dj * wt_j_ton, 2)
+                    tk_t_c = round(dt * wt_t_ton, 2)
+                    total_tk += (tk_j_c + tk_t_c)
+                    
+                    city_assignments.append({
+                        '市町村コード': c_item['code'], '市町村名': c_item['name'],
+                        '市町村一括担当': 'なし', '市町村一括担当営業所': '-',
+                        'J社個別': c_item['orig_j'], 'T社個別': c_item['orig_t'],
+                        'J社 距離(km)': dj, 'J社 配達重量(kg)': c_item['wt_j'], 'J社 トンキロ(t・km)': tk_j_c,
+                        'T社 距離(km)': dt, 'T社 配達重量(kg)': c_item['wt_t'], 'T社 トンキロ(t・km)': tk_t_c,
+                        '_j_def_off': c_item['orig_j'], '_t_def_off': c_item['orig_t']
+                    })
+                else:
                     best_j_off, best_j_dist = min(
                         ((off, calc_haversine_distance(coords[0], coords[1], c_lat, c_lon)) for off, coords in active_j_offices.items()),
                         key=lambda x: x[1]
@@ -453,17 +484,17 @@ def solve_optimal_scenario_cached(df_j_in, df_t_in):
                         '_j_def_off': c_item['orig_j'], '_t_def_off': c_item['orig_t']
                     })
                     
-                if total_tk < best_total_tk:
-                    best_total_tk = total_tk
-                    best_config = {
-                        'cand_city': candidate_city,
-                        'cand_coords': cand_coords,
-                        'cand_address': MUNICIPAL_ADDRESS_LOOKUP.get(candidate_city, f"大阪府{candidate_city}"),
-                        'j_close': j_close,
-                        't_close': t_close,
-                        'total_tk': round(total_tk, 2),
-                        'df': pd.DataFrame(city_assignments)
-                    }
+            if total_tk < best_total_tk:
+                best_total_tk = total_tk
+                best_config = {
+                    'cand_city': candidate_city,
+                    'cand_coords': cand_coords,
+                    'cand_address': MUNICIPAL_ADDRESS_LOOKUP.get(candidate_city, f"大阪府{candidate_city}"),
+                    'j_close': j_close,
+                    't_close': t_close_fixed,
+                    'total_tk': round(total_tk, 2),
+                    'df': pd.DataFrame(city_assignments)
+                }
 
     return best_config
 
@@ -803,16 +834,15 @@ for p_idx in [1, 2, 3, 4]:
                 elif bulk == 'T社' and bulk_off in t_color_map_p:
                     fill_rgb = t_color_map_p[bulk_off]
                 elif bulk in ['なし', '-'] and ((j_indiv_off != '-') or (t_indiv_off != '-')):
-                    fill_rgb = (200, 200, 200) # 個別選択あり＝灰色
+                    fill_rgb = (200, 200, 200)
                 else:
-                    fill_rgb = (255, 255, 255) # 未設定＝白色
+                    fill_rgb = (255, 255, 255)
 
                 target_coords = [(sx, sy)]
                 if c_name in EXTRA_SEEDS:
                     target_coords.extend(EXTRA_SEEDS[c_name])
                     
                 for cs_x, cs_y in target_coords:
-                    # 境界チェックガード（IndexError完全回避）
                     if 0 <= cs_x < w and 0 <= cs_y < h:
                         if line_bin_dilated[cs_y, cs_x] == 255:
                             found = False
@@ -854,7 +884,7 @@ for p_idx in [1, 2, 3, 4]:
             with map_col2:
                 st.image(cropped_img, width=600)
 
-# UIタブ「⭐ 最適解：受持選択」のレンダリング
+# ③ UIタブ「⭐ 最適解：受持選択」のレンダリング（白地図エリアマップ画像付き）
 with tabs[6]:
     st.subheader("⭐ トンキロ最小化：全体最適解（1拠点新設 ＆ 既存2拠点廃止）")
     st.caption("数学的最適化アルゴリズムにより、全体トンキロが最も小さくなる「新規共同拠点の1箇所設置」および「J社・T社既存拠点の各1箇所廃止」の最小化構成を全自動計算した結果です。")
@@ -863,7 +893,7 @@ with tabs[6]:
     with col_opt_info1:
         st.info(f"📍 **新規営業所 設置地 (J社/T社共同):**\n\n**{best_opt_res['cand_city']}**（{best_opt_res['cand_address']}）")
     with col_opt_info2:
-        st.warning(f"廃止対象営業所:\n- 🔴 **J社 廃止拠点:** {best_opt_res['j_close']}\n- 🔵 **T社 廃止拠点:** {best_opt_res['t_close']}")
+        st.warning(f"廃止対象営業所:\n- 🔴 **J社 廃止拠点:** {best_opt_res['j_close']}\n- 🔵 **T社 廃止拠点 (固定):** {best_opt_res['t_close']}")
     with col_opt_info3:
         base_0_df_opt = build_initial_scenario_df(EXISTING_OFFICES_INFO)
         cur_tk_tot_opt = base_0_df_opt['J社 トンキロ(t・km)'].sum() + base_0_df_opt['T社 トンキロ(t・km)'].sum()
@@ -888,9 +918,122 @@ with tabs[6]:
         hide_index=True
     )
 
-# タブ1: 全体サマリー ＆ 現状 vs 4つの変更案比較
+    # ③ 最適解の白地図エリアマップ描画
+    st.markdown("---")
+    st.subheader("🗺️ 最適解 白地図エリアマップ")
+    opt_custom_offices = [
+        {'company': 'J社', 'name': 'J社最適', 'address': best_opt_res['cand_address'], 'coords': best_opt_res['cand_coords']},
+        {'company': 'T社', 'name': 'T社最適', 'address': best_opt_res['cand_address'], 'coords': best_opt_res['cand_coords']}
+    ]
+    j_cmap_opt, t_cmap_opt, j_offs_opt, t_offs_opt = generate_office_colors(df_j, df_t, opt_custom_offices)
+    
+    st.markdown("##### 📌 営業所別 カラー凡例（拡大カラーブロック表示）")
+    leg_cols_opt = st.columns(2)
+    with leg_cols_opt[0]:
+        st.write("**🔴 J社 営業所**")
+        for off in j_offs_opt:
+            c = j_cmap_opt.get(off, (239, 68, 68))
+            hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
+            st.markdown(f'<span style="color:{hex_c}; font-size:48px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:18px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
+            
+    with leg_cols_opt[1]:
+        st.write("**🔵 T社 営業所**")
+        for off in t_offs_opt:
+            c = t_cmap_opt.get(off, (59, 130, 246))
+            hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
+            st.markdown(f'<span style="color:{hex_c}; font-size:48px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:18px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
+
+    st.write("")
+
+    map_img_path_opt = None
+    for target_path in ["画像4_2.png", "画像4_2.jpg", "画像4.png", "画像3.jpg"]:
+        if os.path.exists(target_path):
+            map_img_path_opt = target_path
+            break
+
+    opt_map_image = None
+    if map_img_path_opt and os.path.exists(map_img_path_opt):
+        src_img_o = cv2.imread(map_img_path_opt)
+        src_img_o = cv2.resize(src_img_o, (1024, 1400), interpolation=cv2.INTER_AREA)
+        h_o, w_o, _ = src_img_o.shape
+        
+        gray_o = cv2.cvtColor(src_img_o, cv2.COLOR_BGR2GRAY)
+        line_bin_o = (gray_o > 40).astype(np.uint8) * 255
+            
+        kernel_o = np.ones((3, 3), np.uint8)
+        line_bin_dilated_o = cv2.dilate(line_bin_o, kernel_o, iterations=1)
+        
+        canvas_rgb_o = np.full((h_o, w_o, 3), 255, dtype=np.uint8)
+        canvas_rgb_o[line_bin_dilated_o == 255] = (0, 0, 0)
+        
+        bg_protection_mask_o = np.zeros((h_o + 2, w_o + 2), np.uint8)
+        cv2.floodFill(canvas_rgb_o.copy(), bg_protection_mask_o, (0, 0), (255, 255, 255), (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
+
+        df_opt_map = best_opt_res['df']
+        for _, r_opt_m in df_opt_map.iterrows():
+            c_name_m = r_opt_m['市町村名']
+            bulk_m = r_opt_m['市町村一括担当']
+            bulk_off_m = r_opt_m['市町村一括担当営業所']
+            j_ind_m = r_opt_m['J社個別']
+            t_ind_m = r_opt_m['T社個別']
+            
+            if bulk_m == 'J社' and bulk_off_m in j_cmap_opt:
+                fill_rgb_o = j_cmap_opt[bulk_off_m]
+            elif bulk_m == 'T社' and bulk_off_m in t_cmap_opt:
+                fill_rgb_o = t_cmap_opt[bulk_off_m]
+            elif bulk_m in ['なし', '-'] and ((j_ind_m != '-') or (t_ind_m != '-')):
+                fill_rgb_o = (200, 200, 200)
+            else:
+                fill_rgb_o = (255, 255, 255)
+
+            if c_name_m in CITY_SEEDS:
+                sx_o, sy_o = CITY_SEEDS[c_name_m]
+                target_coords_o = [(sx_o, sy_o)]
+                if c_name_m in EXTRA_SEEDS:
+                    target_coords_o.extend(EXTRA_SEEDS[c_name_m])
+                    
+                for cs_x_o, cs_y_o in target_coords_o:
+                    if 0 <= cs_x_o < w_o and 0 <= cs_y_o < h_o:
+                        if line_bin_dilated_o[cs_y_o, cs_x_o] == 255:
+                            found_o = False
+                            for r_o in range(1, 15):
+                                for dy_o in range(-r_o, r_o+1):
+                                    for dx_o in range(-r_o, r_o+1):
+                                        nx_o, ny_o = cs_x_o + dx_o, cs_y_o + dy_o
+                                        if 0 <= nx_o < w_o and 0 <= ny_o < h_o and line_bin_dilated_o[ny_o, nx_o] == 0:
+                                            cs_x_o, cs_y_o = nx_o, ny_o
+                                            found_o = True
+                                            break
+                                    if found_o: break
+                                if found_o: break
+
+                        if 0 <= cs_x_o < w_o and 0 <= cs_y_o < h_o and line_bin_dilated_o[cs_y_o, cs_x_o] == 0:
+                            m_curr_o = bg_protection_mask_o.copy()
+                            cv2.floodFill(canvas_rgb_o, m_curr_o, (cs_x_o, cs_y_o), fill_rgb_o, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
+
+        canvas_rgb_o[line_bin_dilated_o == 255] = (0, 0, 0)
+        gray_check_o = cv2.cvtColor(canvas_rgb_o, cv2.COLOR_RGB2GRAY)
+        non_bg_o = np.where(gray_check_o < 250)
+        
+        if len(non_bg_o[0]) > 0:
+            min_y_o, max_y_o = np.min(non_bg_o[0]), np.max(non_bg_o[0])
+            min_x_o, max_x_o = np.min(non_bg_o[1]), np.max(non_bg_o[1])
+            pad_o = 12
+            crop_min_y_o = max(0, min_y_o - pad_o)
+            crop_max_y_o = min(h_o, max_y_o + pad_o)
+            crop_min_x_o = max(0, min_x_o - pad_o)
+            crop_max_x_o = min(w_o, max_x_o + pad_o)
+            opt_map_image = canvas_rgb_o[crop_min_y_o:crop_max_y_o, crop_min_x_o:crop_max_x_o]
+        else:
+            opt_map_image = canvas_rgb_o
+
+        map_col1_o, map_col2_o, map_col3_o = st.columns([1, 4, 1])
+        with map_col2_o:
+            st.image(opt_map_image, width=600)
+
+# タブ1: ① 全体サマリー ＆ 現状 vs 4つの変更案 ＋ 最適解比較
 with tabs[0]:
-    st.subheader("📈 会社毎の「現状」vs「4つの変更案（案1〜案4）」一括比較サマリー")
+    st.subheader("📈 会社毎の「現状」vs「4つの変更案（案1〜案4）」vs「最適解」一括比較サマリー")
     st.caption("J社・T社個別の数値に加え、運送2社全体の合計トンキロ・配達重量（t）・削減率を一括比較します。")
 
     base_0_df = build_initial_scenario_df(EXISTING_OFFICES_INFO)
@@ -946,6 +1089,23 @@ with tabs[0]:
         t_pct = round((t_diff / cur_t_tk_total * 100), 1) if cur_t_tk_total > 0 else 0.0
         summary_rows.append({'パターン': f'案{p_idx}', '会社': 'T社', '担当自治体数': t_cnt, '配達重量_t': round(t_wt_sum, 2), 'トンキロ': round(t_tk_sum, 2), 'トンキロ削減量': round(t_diff, 2), '削減率(%)': t_pct})
 
+    # ① 最適解の集計行の追加
+    df_opt_calc = best_opt_res['df']
+    opt_j_tk_sum = df_opt_calc['J社 トンキロ(t・km)'].sum()
+    opt_t_tk_sum = df_opt_calc['T社 トンキロ(t・km)'].sum()
+    opt_j_wt_sum = df_opt_calc['J社 配達重量(kg)'].sum() / 1000.0
+    opt_t_wt_sum = df_opt_calc['T社 配達重量(kg)'].sum() / 1000.0
+    opt_j_cnt = len(df_opt_calc[df_opt_calc['J社 トンキロ(t・km)'] > 0])
+    opt_t_cnt = len(df_opt_calc[df_opt_calc['T社 トンキロ(t・km)'] > 0])
+
+    opt_j_diff = cur_j_tk_total - opt_j_tk_sum
+    opt_j_pct = round((opt_j_diff / cur_j_tk_total * 100), 1) if cur_j_tk_total > 0 else 0.0
+    summary_rows.append({'パターン': '最適解', '会社': 'J社', '担当自治体数': opt_j_cnt, '配達重量_t': round(opt_j_wt_sum, 2), 'トンキロ': round(opt_j_tk_sum, 2), 'トンキロ削減量': round(opt_j_diff, 2), '削減率(%)': opt_j_pct})
+
+    opt_t_diff = cur_t_tk_total - opt_t_tk_sum
+    opt_t_pct = round((opt_t_diff / cur_t_tk_total * 100), 1) if cur_t_tk_total > 0 else 0.0
+    summary_rows.append({'パターン': '最適解', '会社': 'T社', '担当自治体数': opt_t_cnt, '配達重量_t': round(opt_t_wt_sum, 2), 'トンキロ': round(opt_t_tk_sum, 2), 'トンキロ削減量': round(opt_t_diff, 2), '削減率(%)': opt_t_pct})
+
     summary_df = pd.DataFrame(summary_rows)
 
     cur_comb_tk_total = cur_j_tk_total + cur_t_tk_total
@@ -960,11 +1120,6 @@ with tabs[0]:
         '合計_トンキロ': round(cur_comb_tk_total, 2),
         '合計_削減量': 0.0,
         '合計_削減率(%)': 0.0,
-        'J社_配達重量_t': round(cur_j_wt_total, 2),
-        'T社_配達重量_t': round(cur_t_wt_total, 2),
-        '合計_配達重量_t': round(cur_comb_wt_total, 2),
-        '重量_削減量_t': 0.0,
-        '重量_削減率(%)': 0.0,
     })
 
     for p_idx in [1, 2, 3, 4]:
@@ -977,12 +1132,6 @@ with tabs[0]:
         comb_diff = cur_comb_tk_total - comb_tk_p
         comb_pct = round((comb_diff / cur_comb_tk_total * 100), 1) if cur_comb_tk_total > 0 else 0.0
         
-        j_wt_p = j_row['配達重量_t']
-        t_wt_p = t_row['配達重量_t']
-        comb_wt_p = j_wt_p + t_wt_p
-        comb_wt_diff = cur_comb_wt_total - comb_wt_p
-        comb_wt_pct = round((comb_wt_diff / cur_comb_wt_total * 100), 1) if cur_comb_wt_total > 0 else 0.0
-        
         comb_summary_rows.append({
             'パターン': f'案{p_idx}',
             'J社_トンキロ': j_tk_p,
@@ -990,15 +1139,24 @@ with tabs[0]:
             '合計_トンキロ': round(comb_tk_p, 2),
             '合計_削減量': round(comb_diff, 2),
             '合計_削減率(%)': comb_pct,
-            'J社_配達重量_t': j_wt_p,
-            'T社_配達重量_t': t_wt_p,
-            '合計_配達重量_t': round(comb_wt_p, 2),
-            '重量_削減量_t': round(comb_wt_diff, 2),
-            '重量_削減率(%)': comb_wt_pct,
         })
+
+    # ① 最適解の全体の合計行を追加
+    opt_comb_tk_p = opt_j_tk_sum + opt_t_tk_sum
+    opt_comb_diff = cur_comb_tk_total - opt_comb_tk_p
+    opt_comb_pct = round((opt_comb_diff / cur_comb_tk_total * 100), 1) if cur_comb_tk_total > 0 else 0.0
+    comb_summary_rows.append({
+        'パターン': '最適解',
+        'J社_トンキロ': round(opt_j_tk_sum, 2),
+        'T社_トンキロ': round(opt_t_tk_sum, 2),
+        '合計_トンキロ': round(opt_comb_tk_p, 2),
+        '合計_削減量': round(opt_comb_diff, 2),
+        '合計_削減率(%)': opt_comb_pct,
+    })
 
     comb_summary_df = pd.DataFrame(comb_summary_rows)
 
+    # ③ ⑥ ⑦ Excel出力機能（全シート＆最適解マップ＆営業所別比較シート完備）
     excel_full_bytes = io.BytesIO()
     with pd.ExcelWriter(excel_full_bytes, engine='openpyxl') as writer:
         all_cust_rows = []
@@ -1012,6 +1170,7 @@ with tabs[0]:
                     '所在地住所': c_item['address']
                 })
                 
+        # ④ 「新規営業所一覧」シートの案4の下に「最適解」の住所情報を記載出力
         all_cust_rows.append({
             '対象パターン': '最適解',
             '担当会社': 'J社',
@@ -1028,13 +1187,16 @@ with tabs[0]:
         df_cust_all = pd.DataFrame(all_cust_rows)
         df_cust_all.to_excel(writer, sheet_name='新規営業所一覧', index=False)
 
+        # 「現状」シート
         df_cur_export = base_0_df[display_cols].copy()
         df_cur_export.to_excel(writer, sheet_name='現状', index=False)
 
+        # 案1〜案4シート
         for p_i in [1, 2, 3, 4]:
             p_df_export = st.session_state[f"table_data_p{p_i}"][display_cols].copy()
             p_df_export.to_excel(writer, sheet_name=f'案{p_i}', index=False)
 
+        # ③ 「最適解」シートの追加
         df_opt_export = best_opt_res['df'][display_cols].copy()
         df_opt_export.to_excel(writer, sheet_name='最適解', index=False)
 
@@ -1083,13 +1245,13 @@ with tabs[0]:
                 ws_p.column_dimensions['K'].width = 18.9
                 ws_p.column_dimensions['L'].width = 20.6
 
-        # シート「白地図エリアマップ」生成
+        # ⑥ シート「白地図エリアマップ」生成（最適解含む）
         ws_map = wb.create_sheet(title="白地図エリアマップ")
         ws_map.views.sheetView[0].showGridLines = True
-        ws_map['A1'] = "🗺️ 大阪府 市区町村別受持選択 白地図エリアマップ（案1〜案4 比較一覧）"
+        ws_map['A1'] = "🗺️ 大阪府 市区町村別受持選択 白地図エリアマップ（案1〜案4・最適解 比較一覧）"
         ws_map['A1'].font = Font(name='BIZ UDPゴシック', size=11, bold=True)
         
-        ws_map['A3'] = "【全体トンキロ比較対比表（現状 vs 案1〜案4）】"
+        ws_map['A3'] = "【全体トンキロ比較対比表（現状 vs 案1〜案4 vs 最適解）】"
         ws_map['A3'].font = Font(name='BIZ UDPゴシック', size=11, bold=True)
         
         map_headers = ['パターン', 'J社 トンキロ(t・km)', 'T社 トンキロ(t・km)', '合計 トンキロ(t・km)', '合計 削減量', '合計 削減率(%)']
@@ -1113,11 +1275,13 @@ with tabs[0]:
                 cell_item.font = data_font
                 cell_item.border = border_thin
 
+        # ⑥ 最適解マップ含む配置マッピング（B13: 案1, E13: 案2, M13: 案3, X13: 案4, AI13: 最適解）
         map_cell_positions = {
-            1: ('B', 12, 13),   # 案1: B12, B13
-            2: ('E', 12, 13),   # 案2: E12, E13
-            3: ('M', 12, 13),   # 案3: M12, M13
-            4: ('X', 12, 13)    # 案4: X12, X13
+            1: ('B', 13, 14),   # 案1
+            2: ('E', 13, 14),   # 案2
+            3: ('M', 13, 14),   # 案3
+            4: ('X', 13, 14),   # 案4
+            5: ('AI', 13, 14)   # 最適解
         }
         
         for p_i in [1, 2, 3, 4]:
@@ -1137,6 +1301,20 @@ with tabs[0]:
                     xl_img.height = 520
                     ws_map.add_image(xl_img, f"{col_let}{img_row}")
 
+        # ⑥ 最適解マップ画像を埋め込み出力
+        col_let_opt, t_row_opt, img_row_opt = map_cell_positions[5]
+        t_cell_opt = ws_map[f"{col_let_opt}{t_row_opt}"]
+        t_cell_opt.value = "■ 最適解 マップ"
+        t_cell_opt.font = Font(name='BIZ UDPゴシック', size=11, bold=True)
+        if opt_map_image is not None:
+            b_rgb_opt = cv2.cvtColor(opt_map_image, cv2.COLOR_RGB2BGR)
+            is_ok_opt, buffer_opt = cv2.imencode(".png", b_rgb_opt)
+            if is_ok_opt:
+                xl_img_opt = OpenPyxlImage(io.BytesIO(buffer_opt))
+                xl_img_opt.width = 380
+                xl_img_opt.height = 520
+                ws_map.add_image(xl_img_opt, f"{col_let_opt}{img_row_opt}")
+
         ws_map.column_dimensions['A'].width = 14.3
         ws_map.column_dimensions['B'].width = 21.5
         ws_map.column_dimensions['C'].width = 21.9
@@ -1144,8 +1322,142 @@ with tabs[0]:
         ws_map.column_dimensions['E'].width = 13.7
         ws_map.column_dimensions['F'].width = 17.0
 
+        # ⑦ 新規シート「営業所別集計比較」の出力追加
+        base_j_offices_ex = sorted(list(set(df_j['J社営業所名'].dropna().astype(str).tolist())))
+        base_t_offices_ex = sorted(list(set(df_t['T社営業所名'].dropna().astype(str).tolist())))
+
+        def get_office_metrics_dict_ex(p_df_in):
+            w_dict = {}; tk_dict = {}
+            for _, r_item in p_df_in.iterrows():
+                bulk = str(r_item['市町村一括担当']).strip()
+                bulk_off = str(r_item['市町村一括担当営業所']).strip()
+                j_ind = str(r_item['J社個別']).strip()
+                t_ind = str(r_item['T社個別']).strip()
+                wt_j = float(r_item['J社 配達重量(kg)']) / 1000.0
+                wt_t = float(r_item['T社 配達重量(kg)']) / 1000.0
+                tk_j = float(r_item['J社 トンキロ(t・km)'])
+                tk_t = float(r_item['T社 トンキロ(t・km)'])
+                if bulk in ['J社', 'T社']:
+                    key = (bulk, bulk_off)
+                    w_dict[key] = w_dict.get(key, 0.0) + (wt_j + wt_t)
+                    tk_dict[key] = tk_dict.get(key, 0.0) + (tk_j + tk_t)
+                else:
+                    if j_ind != '-':
+                        key = ('J社', j_ind)
+                        w_dict[key] = w_dict.get(key, 0.0) + wt_j
+                        tk_dict[key] = tk_dict.get(key, 0.0) + tk_j
+                    if t_ind != '-':
+                        key = ('T社', t_ind)
+                        w_dict[key] = w_dict.get(key, 0.0) + wt_t
+                        tk_dict[key] = tk_dict.get(key, 0.0) + tk_t
+            return w_dict, tk_dict
+
+        cur_wm, cur_tkm = get_office_metrics_dict_ex(base_0_df)
+        p1_wm, p1_tkm = get_office_metrics_dict_ex(st.session_state["table_data_p1"])
+        p2_wm, p2_tkm = get_office_metrics_dict_ex(st.session_state["table_data_p2"])
+        p3_wm, p3_tkm = get_office_metrics_dict_ex(st.session_state["table_data_p3"])
+        p4_wm, p4_tkm = get_office_metrics_dict_ex(st.session_state["table_data_p4"])
+        opt_wm, opt_tkm = get_office_metrics_dict_ex(best_opt_res['df'])
+
+        def build_comp_ex_df(comp_name, base_offs, is_weight=True):
+            rows = []
+            m_cur, m_p1, m_p2, m_p3, m_p4, m_opt = (cur_wm, p1_wm, p2_wm, p3_wm, p4_wm, opt_wm) if is_weight else (cur_tkm, p1_tkm, p2_tkm, p3_tkm, p4_tkm, opt_tkm)
+            suffix = "_配達重量_t" if is_weight else "_トンキロ"
+            
+            for off in base_offs:
+                rows.append({
+                    '営業所名': off,
+                    f'現状{suffix}': round(m_cur.get((comp_name, off), 0.0), 2),
+                    f'案1{suffix}': round(m_p1.get((comp_name, off), 0.0), 2),
+                    f'案2{suffix}': round(m_p2.get((comp_name, off), 0.0), 2),
+                    f'案3{suffix}': round(m_p3.get((comp_name, off), 0.0), 2),
+                    f'案4{suffix}': round(m_p4.get((comp_name, off), 0.0), 2),
+                    f'最適解{suffix}': round(m_opt.get((comp_name, off), 0.0), 2),
+                })
+            
+            # 新規営業所行（最適解は J社最適 / T社最適）
+            p1_n = round(m_p1.get((comp_name, f"{comp_name}案1"), 0.0), 2)
+            p2_n = round(m_p2.get((comp_name, f"{comp_name}案2"), 0.0), 2)
+            p3_n = round(m_p3.get((comp_name, f"{comp_name}案3"), 0.0), 2)
+            p4_n = round(m_p4.get((comp_name, f"{comp_name}案4"), 0.0), 2)
+            opt_n = round(m_opt.get((comp_name, f"{comp_name}最適"), 0.0), 2)
+            
+            rows.append({
+                '営業所名': f"{comp_name}新規営業所",
+                f'現状{suffix}': 0.0,
+                f'案1{suffix}': p1_n, f'案2{suffix}': p2_n, f'案3{suffix}': p3_n, f'案4{suffix}': p4_n, f'最適解{suffix}': opt_n,
+            })
+            
+            df_sub = pd.DataFrame(rows)
+            tot_row = {'営業所名': '合計'}
+            for col_c in df_sub.columns:
+                if col_c != '営業所名':
+                    tot_row[col_c] = round(df_sub[col_c].sum(), 2)
+                    
+            return pd.concat([df_sub, pd.DataFrame([tot_row])], ignore_index=True)
+
+        ws_off = wb.create_sheet(title="営業所別集計比較")
+        ws_off.views.sheetView[0].showGridLines = True
+        
+        # 配達重量比較表
+        ws_off['A1'] = "【1. 各営業所の「現状」vs「案1〜4」vs「最適解」合計配達重量（t）比較】"
+        ws_off['A1'].font = Font(name='BIZ UDPゴシック', size=11, bold=True)
+        
+        df_j_w_ex = build_comp_ex_df('J社', base_j_offices_ex, is_weight=True)
+        df_t_w_ex = build_comp_ex_df('T社', base_t_offices_ex, is_weight=True)
+        
+        ws_off['A3'] = "🔴 J社 営業所別 配達重量（t）比較表"
+        ws_off['A3'].font = Font(name='BIZ UDPゴシック', size=11, bold=True)
+        for col_i, col_name in enumerate(df_j_w_ex.columns, 1):
+            cell_h = ws_off.cell(row=4, column=col_i, value=col_name)
+            cell_h.font = hdr_font; cell_h.fill = hdr_fill; cell_h.border = border_thin
+        for r_i, r_val in df_j_w_ex.iterrows():
+            for c_i, col_name in enumerate(df_j_w_ex.columns, 1):
+                cell_d = ws_map.cell if False else ws_off.cell(row=r_i+5, column=c_i, value=r_val[col_name])
+                cell_d.font = data_font; cell_d.border = border_thin
+
+        row_start_t = len(df_j_w_ex) + 7
+        ws_off.cell(row=row_start_t, column=1, value="🔵 T社 営業所別 配達重量（t）比較表").font = Font(name='BIZ UDPゴシック', size=11, bold=True)
+        for col_i, col_name in enumerate(df_t_w_ex.columns, 1):
+            cell_h = ws_off.cell(row=row_start_t+1, column=col_i, value=col_name)
+            cell_h.font = hdr_font; cell_h.fill = hdr_fill; cell_h.border = border_thin
+        for r_i, r_val in df_t_w_ex.iterrows():
+            for c_i, col_name in enumerate(df_t_w_ex.columns, 1):
+                cell_d = ws_off.cell(row=row_start_t+2+r_i, column=c_i, value=r_val[col_name])
+                cell_d.font = data_font; cell_d.border = border_thin
+
+        # トンキロ比較表
+        row_start_tk = row_start_t + len(df_t_w_ex) + 4
+        ws_off.cell(row=row_start_tk, column=1, value="【2. 各営業所の「現状」vs「案1〜4」vs「最適解」合計トンキロ（t・km）比較】").font = Font(name='BIZ UDPゴシック', size=11, bold=True)
+        
+        df_j_tk_ex = build_comp_ex_df('J社', base_j_offices_ex, is_weight=False)
+        df_t_tk_ex = build_comp_ex_df('T社', base_t_offices_ex, is_weight=False)
+
+        ws_off.cell(row=row_start_tk+2, column=1, value="🔴 J社 営業所別 トンキロ（t・km）比較表").font = Font(name='BIZ UDPゴシック', size=11, bold=True)
+        for col_i, col_name in enumerate(df_j_tk_ex.columns, 1):
+            cell_h = ws_off.cell(row=row_start_tk+3, column=col_i, value=col_name)
+            cell_h.font = hdr_font; cell_h.fill = hdr_fill; cell_h.border = border_thin
+        for r_i, r_val in df_j_tk_ex.iterrows():
+            for c_i, col_name in enumerate(df_j_tk_ex.columns, 1):
+                cell_d = ws_off.cell(row=row_start_tk+4+r_i, column=c_i, value=r_val[col_name])
+                cell_d.font = data_font; cell_d.border = border_thin
+
+        row_start_t2 = row_start_tk + len(df_j_tk_ex) + 6
+        ws_off.cell(row=row_start_t2, column=1, value="🔵 T社 営業所別 トンキロ（t・km）比較表").font = Font(name='BIZ UDPゴシック', size=11, bold=True)
+        for col_i, col_name in enumerate(df_t_tk_ex.columns, 1):
+            cell_h = ws_off.cell(row=row_start_t2+1, column=col_i, value=col_name)
+            cell_h.font = hdr_font; cell_h.fill = hdr_fill; cell_h.border = border_thin
+        for r_i, r_val in df_t_tk_ex.iterrows():
+            for c_i, col_name in enumerate(df_t_tk_ex.columns, 1):
+                cell_d = ws_off.cell(row=row_start_t2+2+r_i, column=c_i, value=r_val[col_name])
+                cell_d.font = data_font; cell_d.border = border_thin
+
+        for c_i in range(1, 8):
+            col_let_o = openpyxl.utils.get_column_letter(c_i)
+            ws_off.column_dimensions[col_let_o].width = 18.0
+
     st.download_button(
-        label="📥 全体シミュレーション＆一括データ（現状・案1〜4・最適解・白地図・新規営業所併記）Excel出力",
+        label="📥 全体シミュレーション＆一括データ（現状・案1〜4・最適解・白地図・営業所別集計併記）Excel出力",
         data=excel_full_bytes.getvalue(),
         file_name="大阪府配達エリア最適化シミュレーション_全体比較結果.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1154,9 +1466,9 @@ with tabs[0]:
     )
 
     st.markdown("---")
-    # J社＋T社「全体合計」トンキロ比較メトリック
-    st.markdown("### 🚚 J社 ＋ T社 全体合計：現状 vs 4案のトンキロ比較")
-    cols_comb = st.columns(5)
+    # ① J社＋T社「全体合計」トンキロ比較メトリック（最適解含む6パターン）
+    st.markdown("### 🚚 J社 ＋ T社 全体合計：現状 vs 4案 vs 最適解のトンキロ比較")
+    cols_comb = st.columns(6)
     for idx, col in enumerate(cols_comb):
         row_c = comb_summary_df.iloc[idx]
         diff_v = row_c['合計_削減量']
@@ -1178,7 +1490,7 @@ with tabs[0]:
             st.caption(f"J社: {row_c['J社_トンキロ']:,.1f} ton-km / T社: {row_c['T社_トンキロ']:,.1f} ton-km")
 
     st.markdown("---")
-    st.write("### 📊 全パターン比較対比表（会社別）")
+    st.write("### 📊 全パターン比較対比表（会社別・最適解含む）")
     st.dataframe(
         summary_df.style.format({
             '配達重量_t': '{:,.2f}', 'トンキロ': '{:,.2f}',
@@ -1187,10 +1499,10 @@ with tabs[0]:
         use_container_width=True, hide_index=True
     )
 
-# タブ2: 営業所別 集計比較（配達重量 ＆ トンキロ）
+# タブ2: ② 営業所別 集計比較（配達重量 ＆ トンキロ に「最適解」を追加・統合）
 with tabs[1]:
-    st.subheader("🏬 各営業所の「現状」vs「案1〜案4」集計比較")
-    st.caption("J社・T社それぞれの営業所について、「現状」および「案1〜案4」での合計配達重量（t）および合計トンキロ（t・km）を一括比較します。")
+    st.subheader("🏬 各営業所の「現状」vs「案1〜案4」vs「最適解」集計比較")
+    st.caption("J社・T社それぞれの営業所について、「現状」「案1〜案4」「最適解」での合計配達重量（t）および合計トンキロ（t・km）を一括比較します。")
     
     base_j_offices = sorted(list(set(df_j['J社営業所名'].dropna().astype(str).tolist())))
     base_t_offices = sorted(list(set(df_t['T社営業所名'].dropna().astype(str).tolist())))
@@ -1229,8 +1541,9 @@ with tabs[1]:
     p2_w_map, p2_tk_map = get_office_metrics_dict(st.session_state["table_data_p2"])
     p3_w_map, p3_tk_map = get_office_metrics_dict(st.session_state["table_data_p3"])
     p4_w_map, p4_tk_map = get_office_metrics_dict(st.session_state["table_data_p4"])
+    opt_w_map, opt_tk_map = get_office_metrics_dict(best_opt_res['df'])
 
-    # 1. 合計配達重量（t）比較テーブルの構築
+    # 1. ② 合計配達重量（t）比較テーブルの構築（「最適解」追加）
     def build_company_weight_compare_df(comp_name, base_offices):
         rows = []
         for off in base_offices:
@@ -1241,6 +1554,7 @@ with tabs[1]:
                 '案2_配達重量_t': round(p2_w_map.get((comp_name, off), 0.0), 2),
                 '案3_配達重量_t': round(p3_w_map.get((comp_name, off), 0.0), 2),
                 '案4_配達重量_t': round(p4_w_map.get((comp_name, off), 0.0), 2),
+                '最適解_配達重量_t': round(opt_w_map.get((comp_name, off), 0.0), 2),
             })
             
         new_off_row_name = f"{comp_name}新規営業所"
@@ -1248,6 +1562,7 @@ with tabs[1]:
         p2_new_val = round(p2_w_map.get((comp_name, f"{comp_name}案2"), 0.0), 2)
         p3_new_val = round(p3_w_map.get((comp_name, f"{comp_name}案3"), 0.0), 2)
         p4_new_val = round(p4_w_map.get((comp_name, f"{comp_name}案4"), 0.0), 2)
+        opt_new_val = round(opt_w_map.get((comp_name, f"{comp_name}最適"), 0.0), 2)
         
         rows.append({
             '営業所名': new_off_row_name,
@@ -1256,6 +1571,7 @@ with tabs[1]:
             '案2_配達重量_t': p2_new_val,
             '案3_配達重量_t': p3_new_val,
             '案4_配達重量_t': p4_new_val,
+            '最適解_配達重量_t': opt_new_val,
         })
         
         df_sub = pd.DataFrame(rows)
@@ -1266,10 +1582,11 @@ with tabs[1]:
             '案2_配達重量_t': round(df_sub['案2_配達重量_t'].sum(), 2),
             '案3_配達重量_t': round(df_sub['案3_配達重量_t'].sum(), 2),
             '案4_配達重量_t': round(df_sub['案4_配達重量_t'].sum(), 2),
+            '最適解_配達重量_t': round(df_sub['最適解_配達重量_t'].sum(), 2),
         }
         return pd.concat([df_sub, pd.DataFrame([tot_row])], ignore_index=True)
 
-    # 2. 合計トンキロ（t・km）比較テーブルの構築
+    # 2. ② 合計トンキロ（t・km）比較テーブルの構築（「最適解」追加）
     def build_company_tonkm_compare_df(comp_name, base_offices):
         rows = []
         for off in base_offices:
@@ -1280,6 +1597,7 @@ with tabs[1]:
                 '案2_トンキロ': round(p2_tk_map.get((comp_name, off), 0.0), 2),
                 '案3_トンキロ': round(p3_tk_map.get((comp_name, off), 0.0), 2),
                 '案4_トンキロ': round(p4_tk_map.get((comp_name, off), 0.0), 2),
+                '最適解_トンキロ': round(opt_tk_map.get((comp_name, off), 0.0), 2),
             })
             
         new_off_row_name = f"{comp_name}新規営業所"
@@ -1287,6 +1605,7 @@ with tabs[1]:
         p2_new_val = round(p2_tk_map.get((comp_name, f"{comp_name}案2"), 0.0), 2)
         p3_new_val = round(p3_tk_map.get((comp_name, f"{comp_name}案3"), 0.0), 2)
         p4_new_val = round(p4_tk_map.get((comp_name, f"{comp_name}案4"), 0.0), 2)
+        opt_new_val = round(opt_tk_map.get((comp_name, f"{comp_name}最適"), 0.0), 2)
         
         rows.append({
             '営業所名': new_off_row_name,
@@ -1295,6 +1614,7 @@ with tabs[1]:
             '案2_トンキロ': p2_new_val,
             '案3_トンキロ': p3_new_val,
             '案4_トンキロ': p4_new_val,
+            '最適解_トンキロ': opt_new_val,
         })
         
         df_sub = pd.DataFrame(rows)
@@ -1305,18 +1625,20 @@ with tabs[1]:
             '案2_トンキロ': round(df_sub['案2_トンキロ'].sum(), 2),
             '案3_トンキロ': round(df_sub['案3_トンキロ'].sum(), 2),
             '案4_トンキロ': round(df_sub['案4_トンキロ'].sum(), 2),
+            '最適解_トンキロ': round(df_sub['最適解_トンキロ'].sum(), 2),
         }
         return pd.concat([df_sub, pd.DataFrame([tot_row])], ignore_index=True)
 
     # 1) 配達重量（t）比較表示
-    st.markdown("### 📦 1. 各営業所の「現状」vs「案1〜案4」合計配達重量（t）比較")
+    st.markdown("### 📦 1. 各営業所の「現状」vs「案1〜案4」vs「最適解」合計配達重量（t）比較")
     col_w1, col_w2 = st.columns(2)
     with col_w1:
         st.markdown("#### 🔴 J社 営業所別 配達重量（t）比較表")
         st.dataframe(
             build_company_weight_compare_df('J社', base_j_offices).style.format({
                 '現状_配達重量_t': '{:,.2f}', '案1_配達重量_t': '{:,.2f}',
-                '案2_配達重量_t': '{:,.2f}', '案3_配達重量_t': '{:,.2f}', '案4_配達重量_t': '{:,.2f}'
+                '案2_配達重量_t': '{:,.2f}', '案3_配達重量_t': '{:,.2f}',
+                '案4_配達重量_t': '{:,.2f}', '最適解_配達重量_t': '{:,.2f}'
             }),
             use_container_width=True, hide_index=True
         )
@@ -1326,7 +1648,8 @@ with tabs[1]:
         st.dataframe(
             build_company_weight_compare_df('T社', base_t_offices).style.format({
                 '現状_配達重量_t': '{:,.2f}', '案1_配達重量_t': '{:,.2f}',
-                '案2_配達重量_t': '{:,.2f}', '案3_配達重量_t': '{:,.2f}', '案4_配達重量_t': '{:,.2f}'
+                '案2_配達重量_t': '{:,.2f}', '案3_配達重量_t': '{:,.2f}',
+                '案4_配達重量_t': '{:,.2f}', '最適解_配達重量_t': '{:,.2f}'
             }),
             use_container_width=True, hide_index=True
         )
@@ -1334,14 +1657,15 @@ with tabs[1]:
     st.markdown("---")
 
     # 2) トンキロ（t・km）比較表示
-    st.markdown("### 🚚 2. 各営業所の「現状」vs「案1〜案4」合計トンキロ（t・km）比較")
+    st.markdown("### 🚚 2. 各営業所の「現状」vs「案1〜案4」vs「最適解」合計トンキロ（t・km）比較")
     col_tk1, col_tk2 = st.columns(2)
     with col_tk1:
         st.markdown("#### 🔴 J社 営業所別 トンキロ（t・km）比較表")
         st.dataframe(
             build_company_tonkm_compare_df('J社', base_j_offices).style.format({
                 '現状_トンキロ': '{:,.2f}', '案1_トンキロ': '{:,.2f}',
-                '案2_トンキロ': '{:,.2f}', '案3_トンキロ': '{:,.2f}', '案4_トンキロ': '{:,.2f}'
+                '案2_トンキロ': '{:,.2f}', '案3_トンキロ': '{:,.2f}',
+                '案4_トンキロ': '{:,.2f}', '最適解_トンキロ': '{:,.2f}'
             }),
             use_container_width=True, hide_index=True
         )
@@ -1351,7 +1675,8 @@ with tabs[1]:
         st.dataframe(
             build_company_tonkm_compare_df('T社', base_t_offices).style.format({
                 '現状_トンキロ': '{:,.2f}', '案1_トンキロ': '{:,.2f}',
-                '案2_トンキロ': '{:,.2f}', '案3_トンキロ': '{:,.2f}', '案4_トンキロ': '{:,.2f}'
+                '案2_トンキロ': '{:,.2f}', '案3_トンキロ': '{:,.2f}',
+                '案4_トンキロ': '{:,.2f}', '最適解_トンキロ': '{:,.2f}'
             }),
             use_container_width=True, hide_index=True
         )
