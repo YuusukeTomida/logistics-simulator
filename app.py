@@ -223,9 +223,6 @@ def create_full_import_template(df_j_in, df_t_in):
             city = df_j_in.loc[i, '市区町村名\n（漢字）']
             off_j = df_j_in.loc[i, 'J社営業所名']
             off_t = df_t_in.loc[i, 'T社営業所名']
-            sub_j = str(df_j_in.loc[i, 'J社外部委託地域']).strip() == '◯'
-            sub_t = str(df_t_in.loc[i, 'T社外部委託地域']).strip() == '◯'
-            init_mode = '委託配達' if (sub_j or sub_t) else '自社配達'
             
             tmpl_rows.append({
                 '市町村コード': code,
@@ -291,8 +288,7 @@ CITY_SEEDS = {
     '柏原市': (881, 837), '松原市': (723, 842), '藤井寺市': (817, 853), '羽曳野市': (811, 911), '太子町': (890, 962),
     '富田林市': (811, 1011), '大阪狭山市': (724, 1011), '河南町': (866, 1011), '千早赤阪村': (881, 1104),
     '河内長野市': (743, 1147), '堺市堺区': (607, 848), '堺市北区': (665, 850), '堺市西区': (565, 930),
-    '堺市中区': (34.5369, 135.4967), '堺市東区': (34.5328, 135.5222),
-    '堺市西区': (565, 930), '堺市南区': (641, 1011), '堺市北区': (665, 850), '堺市美原区': (754, 932),
+    '堺市中区': (640, 930), '堺市東区': (682, 911), '堺市美原区': (754, 932), '堺市南区': (641, 1011),
     '高石市': (535, 930), '泉大津市': (504, 1000), '忠岡町': (504, 1011), '和泉市': (565, 1096),
     '岸和田市': (504, 1179), '貝塚市': (494, 1220), '熊取町': (426, 1179), '泉佐野市': (370, 1179),
     '田尻町': (308, 1187), '泉南市': (318, 1251), '阪南市': (239, 1280), '岬町': (118, 1336)
@@ -372,7 +368,7 @@ for p_idx in [1, 2, 3, 4]:
     if key_name not in st.session_state:
         st.session_state[key_name] = build_initial_scenario_df(EXISTING_OFFICES_INFO).copy(deep=True)
 
-# ① 全体トンキロ最小化の最適解自動算出エンジン（新規拠点1箇所同心設置 ＆ J社・T社既存拠点1箇所廃止）
+# 全体トンキロ最小化の最適解自動算出エンジン
 @st.cache_data
 def solve_optimal_scenario_cached(df_j_in, df_t_in):
     j_existing_list = [k[1] for k in EXISTING_OFFICES_INFO.keys() if k[0] == 'J社']
@@ -561,7 +557,7 @@ if imported_scenario_file is not None:
     except Exception as e_imp:
         st.sidebar.error(f"Excel取り込みエラー: {e_imp}")
 
-# ② UIタブ構成に「⭐ 最適解：受持選択」を追加
+# 5. タブUI構成
 tab_names = [
     "📊 全体サマリー＆現状比較",
     "🏢 営業所別 集計比較",
@@ -816,6 +812,7 @@ for p_idx in [1, 2, 3, 4]:
                     target_coords.extend(EXTRA_SEEDS[c_name])
                     
                 for cs_x, cs_y in target_coords:
+                    # 境界チェックガード（IndexError完全回避）
                     if 0 <= cs_x < w and 0 <= cs_y < h:
                         if line_bin_dilated[cs_y, cs_x] == 255:
                             found = False
@@ -830,7 +827,7 @@ for p_idx in [1, 2, 3, 4]:
                                     if found: break
                                 if found: break
 
-                        if line_bin_dilated[cs_y, cs_x] == 0:
+                        if 0 <= cs_x < w and 0 <= cs_y < h and line_bin_dilated[cs_y, cs_x] == 0:
                             m_curr = bg_protection_mask.copy()
                             cv2.floodFill(canvas_rgb, m_curr, (cs_x, cs_y), fill_rgb, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
 
@@ -857,7 +854,7 @@ for p_idx in [1, 2, 3, 4]:
             with map_col2:
                 st.image(cropped_img, width=600)
 
-# ② UIタブ「⭐ 最適解：受持選択」のレンダリング
+# UIタブ「⭐ 最適解：受持選択」のレンダリング
 with tabs[6]:
     st.subheader("⭐ トンキロ最小化：全体最適解（1拠点新設 ＆ 既存2拠点廃止）")
     st.caption("数学的最適化アルゴリズムにより、全体トンキロが最も小さくなる「新規共同拠点の1箇所設置」および「J社・T社既存拠点の各1箇所廃止」の最小化構成を全自動計算した結果です。")
@@ -1002,7 +999,6 @@ with tabs[0]:
 
     comb_summary_df = pd.DataFrame(comb_summary_rows)
 
-    # ③ 出力エクセル（.xlsx）へ「現状」および「最適解」シートを同仕様で追加出力
     excel_full_bytes = io.BytesIO()
     with pd.ExcelWriter(excel_full_bytes, engine='openpyxl') as writer:
         all_cust_rows = []
@@ -1016,7 +1012,6 @@ with tabs[0]:
                     '所在地住所': c_item['address']
                 })
                 
-        # ④ 「新規営業所一覧」シートの案4の下に「最適解」の住所情報を記載出力
         all_cust_rows.append({
             '対象パターン': '最適解',
             '担当会社': 'J社',
@@ -1033,16 +1028,13 @@ with tabs[0]:
         df_cust_all = pd.DataFrame(all_cust_rows)
         df_cust_all.to_excel(writer, sheet_name='新規営業所一覧', index=False)
 
-        # 「現状」シート
         df_cur_export = base_0_df[display_cols].copy()
         df_cur_export.to_excel(writer, sheet_name='現状', index=False)
 
-        # 案1〜案4シート
         for p_i in [1, 2, 3, 4]:
             p_df_export = st.session_state[f"table_data_p{p_i}"][display_cols].copy()
             p_df_export.to_excel(writer, sheet_name=f'案{p_i}', index=False)
 
-        # ③ 「最適解」シートを追加出力（案1〜4と同様フォーマット）
         df_opt_export = best_opt_res['df'][display_cols].copy()
         df_opt_export.to_excel(writer, sheet_name='最適解', index=False)
 
@@ -1091,7 +1083,7 @@ with tabs[0]:
                 ws_p.column_dimensions['K'].width = 18.9
                 ws_p.column_dimensions['L'].width = 20.6
 
-        # シート「白地図エリアマップ」生成（添付書式レイアウト対応）
+        # シート「白地図エリアマップ」生成
         ws_map = wb.create_sheet(title="白地図エリアマップ")
         ws_map.views.sheetView[0].showGridLines = True
         ws_map['A1'] = "🗺️ 大阪府 市区町村別受持選択 白地図エリアマップ（案1〜案4 比較一覧）"
@@ -1122,10 +1114,10 @@ with tabs[0]:
                 cell_item.border = border_thin
 
         map_cell_positions = {
-            1: ('B', 12, 13),   # 案1: B12タイトル, B13画像
-            2: ('E', 12, 13),   # 案2: E12タイトル, E13画像
-            3: ('M', 12, 13),   # 案3: M12タイトル, M13画像
-            4: ('X', 12, 13)    # 案4: X12タイトル, X13画像
+            1: ('B', 12, 13),   # 案1: B12, B13
+            2: ('E', 12, 13),   # 案2: E12, E13
+            3: ('M', 12, 13),   # 案3: M12, M13
+            4: ('X', 12, 13)    # 案4: X12, X13
         }
         
         for p_i in [1, 2, 3, 4]:
@@ -1332,7 +1324,7 @@ with tabs[1]:
     with col_w2:
         st.markdown("#### 🔵 T社 営業所別 配達重量（t）比較表")
         st.dataframe(
-            build_company_weight_compare_df('T社', base_j_offices if False else base_t_offices).style.format({
+            build_company_weight_compare_df('T社', base_t_offices).style.format({
                 '現状_配達重量_t': '{:,.2f}', '案1_配達重量_t': '{:,.2f}',
                 '案2_配達重量_t': '{:,.2f}', '案3_配達重量_t': '{:,.2f}', '案4_配達重量_t': '{:,.2f}'
             }),
