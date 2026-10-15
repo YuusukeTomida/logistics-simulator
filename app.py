@@ -274,6 +274,7 @@ def generate_office_colors(df_j, df_t, custom_offices):
         
     return j_color_map, t_color_map, j_offices, t_offices
 
+# ピクセル座標定義（完全正数化）
 CITY_SEEDS = {
     '能勢町': (542, 143), '豊能町': (635, 232), '島本町': (897, 293), '高槻市': (816, 331), '枚方市': (923, 331),
     '池田市': (553, 351), '箕面市': (618, 359), '茨木市': (702, 292), '交野市': (932, 517), '豊中市': (592, 473),
@@ -288,7 +289,7 @@ CITY_SEEDS = {
     '柏原市': (881, 837), '松原市': (723, 842), '藤井寺市': (817, 853), '羽曳野市': (811, 911), '太子町': (890, 962),
     '富田林市': (811, 1011), '大阪狭山市': (724, 1011), '河南町': (866, 1011), '千早赤阪村': (881, 1104),
     '河内長野市': (743, 1147), '堺市堺区': (607, 848), '堺市北区': (665, 850), '堺市西区': (565, 930),
-    '堺市中区': (34.5369, 135.4967), '堺市東区': (34.5328, 135.5222),
+    '堺市中区': (640, 930), '堺市東区': (682, 911), '堺市美原区': (754, 932), '堺市南区': (641, 1011),
     '高石市': (535, 930), '泉大津市': (504, 1000), '忠岡町': (504, 1011), '和泉市': (565, 1096),
     '岸和田市': (504, 1179), '貝塚市': (494, 1220), '熊取町': (426, 1179), '泉佐野市': (370, 1179),
     '田尻町': (308, 1187), '泉南市': (318, 1251), '阪南市': (239, 1280), '岬町': (118, 1336)
@@ -368,7 +369,7 @@ for p_idx in [1, 2, 3, 4]:
     if key_name not in st.session_state:
         st.session_state[key_name] = build_initial_scenario_df(EXISTING_OFFICES_INFO).copy(deep=True)
 
-# ④ & ⑤ 条件（T社廃止拠点＝「東大阪」固定、現状が「委託」エリアは変更不可）を組み込んだ全体最適化エンジン
+# 条件（T社廃止拠点＝「東大阪」固定、現状が「委託」エリアは変更不可）を組み込んだ全体最適化エンジン
 @st.cache_data
 def solve_optimal_scenario_cached(df_j_in, df_t_in):
     j_existing_list = [k[1] for k in EXISTING_OFFICES_INFO.keys() if k[0] == 'J社']
@@ -842,6 +843,8 @@ for p_idx in [1, 2, 3, 4]:
                     
                 for cs_x, cs_y in target_coords:
                     # 安全境界ガード（IndexError完全回避）
+                    cs_x = int(cs_x)
+                    cs_y = int(cs_y)
                     if 0 <= cs_x < w and 0 <= cs_y < h:
                         if line_bin_dilated[cs_y, cs_x] == 255:
                             found = False
@@ -992,7 +995,9 @@ with tabs[6]:
                     target_coords_o.extend(EXTRA_SEEDS[c_name_m])
                     
                 for cs_x_o, cs_y_o in target_coords_o:
-                    # 安全境界ガード（IndexError完全回避）
+                    cs_x_o = int(cs_x_o)
+                    cs_y_o = int(cs_y_o)
+                    # 完全安全境界ガード
                     if 0 <= cs_x_o < w_o and 0 <= cs_y_o < h_o:
                         if line_bin_dilated_o[cs_y_o, cs_x_o] == 255:
                             found_o = False
@@ -1154,7 +1159,6 @@ with tabs[0]:
 
     comb_summary_df = pd.DataFrame(comb_summary_rows)
 
-    # Excel出力機能（全シート＆最適解マップ＆営業所別比較シート完備）
     excel_full_bytes = io.BytesIO()
     with pd.ExcelWriter(excel_full_bytes, engine='openpyxl') as writer:
         all_cust_rows = []
