@@ -255,6 +255,52 @@ for p_idx in [1, 2, 3, 4]:
     if key_name not in st.session_state:
         st.session_state[key_name] = []
 
+# 高コントラストカラーパレット定義（各営業所・組み合わせの差が明確にわかる鮮やかな色分け）
+J_PALETTE = [
+    (220, 38, 38),    # 鮮やかな赤 (Red)
+    (249, 115, 22),   # オレンジ (Orange)
+    (236, 72, 153),   # ピンク (Pink)
+    (185, 28, 28),    # ディープレッド (Dark Red)
+    (245, 158, 11),   # アンバー・山吹色 (Amber)
+    (225, 29, 72),    # ローズ (Rose)
+    (153, 27, 27),    # クリムゾン (Crimson)
+    (251, 146, 60),   # ライトオレンジ (Light Orange)
+]
+
+T_PALETTE = [
+    (37, 99, 235),    # ロイヤルブルー (Royal Blue)
+    (6, 182, 212),    # シアン・水色 (Cyan)
+    (79, 70, 229),    # インディゴ・藍 (Indigo)
+    (14, 165, 233),   # スカイブルー (Sky Blue)
+    (29, 78, 216),    # コバルトブルー (Cobalt Blue)
+    (20, 184, 166),   # ティール・青緑 (Teal)
+    (30, 58, 138),    # ネイビー (Navy)
+    (56, 189, 248),   # ライトブルー (Light Blue)
+]
+
+MIX_PALETTE = [
+    (22, 163, 74),    # エメラルドグリーン (Emerald Green)
+    (147, 51, 234),   # ビビッドパープル (Vivid Purple)
+    (234, 179, 8),    # イエロー・黄色 (Yellow)
+    (132, 204, 22),   # ライムグリーン (Lime Green)
+    (192, 38, 211),   # マゼンタ・フクシア (Magenta)
+    (13, 148, 136),   # ダークティール (Dark Teal)
+    (168, 85, 247),   # ライトパープル (Light Purple)
+    (101, 163, 13),   # オリーブグリーン (Olive Green)
+    (217, 70, 239),   # オーキッド (Orchid)
+    (5, 150, 105),    # フォレストグリーン (Forest Green)
+    (250, 204, 21),   # ブライトイエロー (Bright Yellow)
+    (124, 58, 237),   # バイオレット (Violet)
+    (74, 222, 128),   # ミントグリーン (Mint Green)
+    (232, 121, 249),  # ピンクパープル (Pink Purple)
+    (163, 230, 53),   # レモンライム (Lemon Lime)
+    (139, 92, 246),   # アメジスト (Amethyst)
+    (16, 185, 129),   # ジェイド (Jade)
+    (190, 24, 93),    # ベリー (Berry)
+    (202, 138, 4),    # ゴールド (Gold)
+    (109, 40, 217),   # ディープバイオレット (Deep Violet)
+]
+
 def generate_office_colors(df_j, df_t, custom_offices):
     j_offices = sorted(list(set(df_j['J社営業所名'].dropna().astype(str).tolist() + [o['name'] for o in custom_offices if o['company'] == 'J社'])))
     t_offices = sorted(list(set(df_t['T社営業所名'].dropna().astype(str).tolist() + [o['name'] for o in custom_offices if o['company'] == 'T社'])))
@@ -262,19 +308,15 @@ def generate_office_colors(df_j, df_t, custom_offices):
     j_color_map = {}
     t_color_map = {}
     
-    n_j = len(j_offices)
     for idx, off in enumerate(j_offices):
-        f = 0.45 + 0.55 * (idx / max(n_j - 1, 1)) if n_j > 1 else 0.85
-        j_color_map[off] = (int(255 * f), int(20 * (1.0 - f)), int(20 * (1.0 - f)))
+        j_color_map[off] = J_PALETTE[idx % len(J_PALETTE)]
         
-    n_t = len(t_offices)
     for idx, off in enumerate(t_offices):
-        f = 0.45 + 0.55 * (idx / max(n_t - 1, 1)) if n_t > 1 else 0.85
-        t_color_map[off] = (int(30 * (1.0 - f)), int(140 * f), int(255 * f))
+        t_color_map[off] = T_PALETTE[idx % len(T_PALETTE)]
         
     return j_color_map, t_color_map, j_offices, t_offices
 
-# ピクセル座標定義（完全正数化）
+# ピクセル座標定義（完全整数化）
 CITY_SEEDS = {
     '能勢町': (542, 143), '豊能町': (635, 232), '島本町': (897, 293), '高槻市': (816, 331), '枚方市': (923, 331),
     '池田市': (553, 351), '箕面市': (618, 359), '茨木市': (702, 292), '交野市': (932, 517), '豊中市': (592, 473),
@@ -300,8 +342,8 @@ EXTRA_SEEDS = {
     '泉佐野市': [(236, 1101)]
 }
 
-# ① 地図色塗り優先順位＆混色算出関数
-def get_city_fill_color_and_mix(bulk_comp, bulk_off, j_indiv, t_indiv, j_cmap, t_cmap):
+# 地図色塗り優先順位＆明確なコントラスト色の割り当て関数
+def get_city_fill_color_and_mix(bulk_comp, bulk_off, j_indiv, t_indiv, j_cmap, t_cmap, assigned_mix_colors):
     bulk_comp = str(bulk_comp).strip()
     bulk_off = str(bulk_off).strip()
     j_indiv = str(j_indiv).strip()
@@ -332,20 +374,17 @@ def get_city_fill_color_and_mix(bulk_comp, bulk_off, j_indiv, t_indiv, j_cmap, t
     has_t = t_indiv not in ['-', 'nan', 'None', '']
     
     if has_j and has_t:
-        cj = find_office_color(j_indiv, 'J社') or (239, 68, 68)
-        ct = find_office_color(t_indiv, 'T社') or (59, 130, 246)
-        mixed_rgb = (
-            int((cj[0] + ct[0]) // 2),
-            int((cj[1] + ct[1]) // 2),
-            int((cj[2] + ct[2]) // 2)
-        )
         mix_label = f"J社:{j_indiv} × T社:{t_indiv}"
-        return mixed_rgb, (mix_label, mixed_rgb)
+        if mix_label not in assigned_mix_colors:
+            color_idx = len(assigned_mix_colors)
+            assigned_mix_colors[mix_label] = MIX_PALETTE[color_idx % len(MIX_PALETTE)]
+        distinct_rgb = assigned_mix_colors[mix_label]
+        return distinct_rgb, (mix_label, distinct_rgb)
     elif has_j:
-        cj = find_office_color(j_indiv, 'J社') or (239, 68, 68)
+        cj = find_office_color(j_indiv, 'J社') or (220, 38, 38)
         return cj, None
     elif has_t:
-        ct = find_office_color(t_indiv, 'T社') or (59, 130, 246)
+        ct = find_office_color(t_indiv, 'T社') or (37, 99, 235)
         return ct, None
 
     # 優先順位3: J社個別、T社個別にも入力がない場合は灰色で塗りつぶし
@@ -638,7 +677,7 @@ if imported_scenario_file is not None:
     except Exception as e_imp:
         st.sidebar.error(f"Excel取り込みエラー: {e_imp}")
 
-# 白地図生成共通ヘルパー関数（優先順位1〜3＆混色凡例リスト返却）
+# 白地図生成共通ヘルパー関数（優先順位1〜3＆高コントラスト混色凡例リスト返却）
 def render_osaka_map_and_collect_mixes(df_map_source, j_cmap, t_cmap):
     map_img_path = None
     for target_path in ["画像4_2.png", "画像4_2.jpg", "画像4.png", "画像3.jpg"]:
@@ -666,10 +705,12 @@ def render_osaka_map_and_collect_mixes(df_map_source, j_cmap, t_cmap):
     bg_protection_mask = np.zeros((h + 2, w + 2), np.uint8)
     cv2.floodFill(canvas_rgb.copy(), bg_protection_mask, (0, 0), (255, 255, 255), (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
 
-    # シティ名からデータ行をマッピング
     city_row_map = {}
     for _, r_m in df_map_source.iterrows():
         city_row_map[str(r_m['市町村名']).strip()] = r_m
+
+    # 組み合わせごとに異なる鮮やかな色を割り当てる辞書
+    assigned_mix_colors = {}
 
     for c_name, (sx, sy) in CITY_SEEDS.items():
         r_data = city_row_map.get(c_name)
@@ -679,7 +720,7 @@ def render_osaka_map_and_collect_mixes(df_map_source, j_cmap, t_cmap):
                 r_data.get('市町村一括担当営業所', '-'),
                 r_data.get('J社個別', '-'),
                 r_data.get('T社個別', '-'),
-                j_cmap, t_cmap
+                j_cmap, t_cmap, assigned_mix_colors
             )
             if mix_entry is not None:
                 used_mixes[mix_entry[0]] = mix_entry[1]
@@ -910,7 +951,7 @@ for p_idx in [1, 2, 3, 4]:
         st.session_state[f"table_data_p{p_idx}"] = curr_p_df
         pattern_active_records[p_idx] = p_active
 
-        # ① & ② マップ生成と混色凡例の自動表示
+        # マップ生成と高コントラスト組み合わせ凡例の自動表示
         cropped_img, used_mixes_p = render_osaka_map_and_collect_mixes(curr_p_df, j_color_map_p, t_color_map_p)
         pattern_map_images[p_idx] = cropped_img
 
@@ -922,25 +963,25 @@ for p_idx in [1, 2, 3, 4]:
         with leg_cols[0]:
             st.write("**🔴 J社 営業所**")
             for off in j_offices_p:
-                c = j_color_map_p.get(off, (239, 68, 68))
+                c = j_color_map_p.get(off, (220, 38, 38))
                 hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
                 st.markdown(f'<span style="color:{hex_c}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:16px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
                 
         with leg_cols[1]:
             st.write("**🔵 T社 営業所**")
             for off in t_offices_p:
-                c = t_color_map_p.get(off, (59, 130, 246))
+                c = t_color_map_p.get(off, (37, 99, 235))
                 hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
                 st.markdown(f'<span style="color:{hex_c}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:16px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
 
         with leg_cols[2]:
-            st.write("**🟣 混色（J社個別 × T社個別）**")
+            st.write("**🎨 組み合わせ（J社個別 × T社個別）**")
             if used_mixes_p:
-                for mix_lbl, m_rgb in sorted(used_mixes_p.items()):
+                for mix_lbl, m_rgb in used_mixes_p.items():
                     hex_m = f"#{m_rgb[0]:02x}{m_rgb[1]:02x}{m_rgb[2]:02x}"
                     st.markdown(f'<span style="color:{hex_m}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:15px; font-weight:bold; vertical-align:middle;">{mix_lbl}</span>', unsafe_allow_html=True)
             else:
-                st.caption("（混色エリアなし）")
+                st.caption("（個別併用エリアなし）")
             st.markdown('<span style="color:#C8C8C8; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:15px; font-weight:bold; vertical-align:middle;">未割り当て（灰色）</span>', unsafe_allow_html=True)
 
         st.write("")
@@ -991,7 +1032,7 @@ with tabs[6]:
     ]
     j_cmap_opt, t_cmap_opt, j_offs_opt, t_offs_opt = generate_office_colors(df_j, df_t, opt_custom_offices)
     
-    # ① & ② 最適解マップ生成と混色凡例の自動表示
+    # 最適解マップ生成と高コントラスト組み合わせ凡例の自動表示
     opt_map_image, used_mixes_opt = render_osaka_map_and_collect_mixes(best_opt_res['df'], j_cmap_opt, t_cmap_opt)
 
     st.markdown("##### 📌 営業所別 カラー凡例（拡大カラーブロック表示）")
@@ -999,25 +1040,25 @@ with tabs[6]:
     with leg_cols_opt[0]:
         st.write("**🔴 J社 営業所**")
         for off in j_offs_opt:
-            c = j_cmap_opt.get(off, (239, 68, 68))
+            c = j_cmap_opt.get(off, (220, 38, 38))
             hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
             st.markdown(f'<span style="color:{hex_c}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:16px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
             
     with leg_cols_opt[1]:
         st.write("**🔵 T社 営業所**")
         for off in t_offs_opt:
-            c = t_cmap_opt.get(off, (59, 130, 246))
+            c = t_cmap_opt.get(off, (37, 99, 235))
             hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
             st.markdown(f'<span style="color:{hex_c}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:16px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
 
     with leg_cols_opt[2]:
-        st.write("**🟣 混色（J社個別 × T社個別）**")
+        st.write("**🎨 組み合わせ（J社個別 × T社個別）**")
         if used_mixes_opt:
-            for mix_lbl, m_rgb in sorted(used_mixes_opt.items()):
+            for mix_lbl, m_rgb in used_mixes_opt.items():
                 hex_m = f"#{m_rgb[0]:02x}{m_rgb[1]:02x}{m_rgb[2]:02x}"
                 st.markdown(f'<span style="color:{hex_m}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:15px; font-weight:bold; vertical-align:middle;">{mix_lbl}</span>', unsafe_allow_html=True)
         else:
-            st.caption("（混色エリアなし）")
+            st.caption("（個別併用エリアなし）")
         st.markdown('<span style="color:#C8C8C8; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:15px; font-weight:bold; vertical-align:middle;">未割り当て（灰色）</span>', unsafe_allow_html=True)
 
     st.write("")
