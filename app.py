@@ -709,7 +709,6 @@ def render_osaka_map_and_collect_mixes(df_map_source, j_cmap, t_cmap):
     for _, r_m in df_map_source.iterrows():
         city_row_map[str(r_m['市町村名']).strip()] = r_m
 
-    # 組み合わせごとに異なる鮮やかな色を割り当てる辞書
     assigned_mix_colors = {}
 
     for c_name, (sx, sy) in CITY_SEEDS.items():
@@ -785,6 +784,7 @@ tabs = st.tabs(tab_names)
 
 pattern_active_records = {1: [], 2: [], 3: [], 4: []}
 pattern_map_images = {1: None, 2: None, 3: None, 4: None}
+pattern_legend_info = {1: {}, 2: {}, 3: {}, 4: {}} # エクセル凡例出力用に営業所カラー・混色辞書を保持
 
 display_cols = [
     '市町村コード', '市町村名', '市町村一括担当', '市町村一括担当営業所',
@@ -954,6 +954,13 @@ for p_idx in [1, 2, 3, 4]:
         # マップ生成と高コントラスト組み合わせ凡例の自動表示
         cropped_img, used_mixes_p = render_osaka_map_and_collect_mixes(curr_p_df, j_color_map_p, t_color_map_p)
         pattern_map_images[p_idx] = cropped_img
+        pattern_legend_info[p_idx] = {
+            'j_offices': j_offices_p,
+            't_offices': t_offices_p,
+            'j_cmap': j_color_map_p,
+            't_cmap': t_color_map_p,
+            'mixes': used_mixes_p
+        }
 
         st.markdown("---")
         st.subheader(f"🗺️ 案{p_idx} 白地図エリアマップ")
@@ -1034,6 +1041,13 @@ with tabs[6]:
     
     # 最適解マップ生成と高コントラスト組み合わせ凡例の自動表示
     opt_map_image, used_mixes_opt = render_osaka_map_and_collect_mixes(best_opt_res['df'], j_cmap_opt, t_cmap_opt)
+    opt_legend_info = {
+        'j_offices': j_offs_opt,
+        't_offices': t_offs_opt,
+        'j_cmap': j_cmap_opt,
+        't_cmap': t_cmap_opt,
+        'mixes': used_mixes_opt
+    }
 
     st.markdown("##### 📌 営業所別 カラー凡例（拡大カラーブロック表示）")
     leg_cols_opt = st.columns(3)
@@ -1272,7 +1286,7 @@ with tabs[0]:
                 ws_p.column_dimensions['K'].width = 18.9
                 ws_p.column_dimensions['L'].width = 20.6
 
-        # シート「白地図エリアマップ」生成
+        # シート「白地図エリアマップ」生成（各白地図＋凡例表を出力）
         ws_map = wb.create_sheet(title="白地図エリアマップ")
         ws_map.views.sheetView[0].showGridLines = True
         ws_map['A1'] = "🗺️ 大阪府 市区町村別受持選択 白地図エリアマップ（案1〜案4・最適解 比較一覧）"
@@ -1302,16 +1316,64 @@ with tabs[0]:
                 cell_item.font = data_font
                 cell_item.border = border_thin
 
+        # 凡例描画用ヘルパー関数
+        def write_legend_block_to_excel(ws_target, start_col_idx, start_row_idx, legend_dict):
+            curr_r = start_row_idx
+            title_c = ws_target.cell(row=curr_r, column=start_col_idx, value="【凡例（色分け一覧）】")
+            title_c.font = Font(name='BIZ UDPゴシック', size=10, bold=True)
+            curr_r += 1
+            
+            # J社営業所
+            for off_name in legend_dict.get('j_offices', []):
+                rgb = legend_dict['j_cmap'].get(off_name, (220, 38, 38))
+                hex_c = f"{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
+                c_box = ws_target.cell(row=curr_r, column=start_col_idx, value="")
+                c_box.fill = PatternFill(start_color=hex_c, end_color=hex_c, fill_type="solid")
+                c_box.border = border_thin
+                c_lbl = ws_target.cell(row=curr_r, column=start_col_idx + 1, value=f"J社: {off_name}")
+                c_lbl.font = Font(name='BIZ UDPゴシック', size=9)
+                curr_r += 1
+                
+            # T社営業所
+            for off_name in legend_dict.get('t_offices', []):
+                rgb = legend_dict['t_cmap'].get(off_name, (37, 99, 235))
+                hex_c = f"{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
+                c_box = ws_target.cell(row=curr_r, column=start_col_idx, value="")
+                c_box.fill = PatternFill(start_color=hex_c, end_color=hex_c, fill_type="solid")
+                c_box.border = border_thin
+                c_lbl = ws_target.cell(row=curr_r, column=start_col_idx + 1, value=f"T社: {off_name}")
+                c_lbl.font = Font(name='BIZ UDPゴシック', size=9)
+                curr_r += 1
+                
+            # 組み合わせ（J社個別 × T社個別）
+            for mix_lbl, rgb in legend_dict.get('mixes', {}).items():
+                hex_c = f"{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
+                c_box = ws_target.cell(row=curr_r, column=start_col_idx, value="")
+                c_box.fill = PatternFill(start_color=hex_c, end_color=hex_c, fill_type="solid")
+                c_box.border = border_thin
+                c_lbl = ws_target.cell(row=curr_r, column=start_col_idx + 1, value=mix_lbl)
+                c_lbl.font = Font(name='BIZ UDPゴシック', size=9)
+                curr_r += 1
+                
+            # 未割り当て（灰色）
+            c_box_gray = ws_target.cell(row=curr_r, column=start_col_idx, value="")
+            c_box_gray.fill = PatternFill(start_color="C8C8C8", end_color="C8C8C8", fill_type="solid")
+            c_box_gray.border = border_thin
+            c_lbl_gray = ws_target.cell(row=curr_r, column=start_col_idx + 1, value="未割り当て（灰色）")
+            c_lbl_gray.font = Font(name='BIZ UDPゴシック', size=9)
+
         map_cell_positions = {
-            1: ('B', 13, 14),   # 案1
-            2: ('E', 13, 14),   # 案2
-            3: ('M', 13, 14),   # 案3
-            4: ('X', 13, 14),   # 案4
-            5: ('AI', 13, 14)   # 最適解
+            1: ('B', 2, 13, 14),    # 案1 (列B=2)
+            2: ('E', 5, 13, 14),    # 案2 (列E=5)
+            3: ('M', 13, 13, 14),   # 案3 (列M=13)
+            4: ('X', 24, 13, 14),   # 案4 (列X=24)
+            5: ('AI', 35, 13, 14)   # 最適解 (列AI=35)
         }
         
+        legend_start_row = 42 # マップ画像（高さ520px ≒ 27行）のすぐ下の行番号
+        
         for p_i in [1, 2, 3, 4]:
-            col_let, t_row, img_row = map_cell_positions[p_i]
+            col_let, col_num, t_row, img_row = map_cell_positions[p_i]
             t_cell = ws_map[f"{col_let}{t_row}"]
             t_cell.value = f"■ 案{p_i} マップ"
             t_cell.font = Font(name='BIZ UDPゴシック', size=11, bold=True)
@@ -1326,8 +1388,11 @@ with tabs[0]:
                     xl_img.width = 380
                     xl_img.height = 520
                     ws_map.add_image(xl_img, f"{col_let}{img_row}")
+            
+            # 凡例出力
+            write_legend_block_to_excel(ws_map, col_num, legend_start_row, pattern_legend_info[p_i])
 
-        col_let_opt, t_row_opt, img_row_opt = map_cell_positions[5]
+        col_let_opt, col_num_opt, t_row_opt, img_row_opt = map_cell_positions[5]
         t_cell_opt = ws_map[f"{col_let_opt}{t_row_opt}"]
         t_cell_opt.value = "■ 最適解 マップ"
         t_cell_opt.font = Font(name='BIZ UDPゴシック', size=11, bold=True)
@@ -1339,6 +1404,9 @@ with tabs[0]:
                 xl_img_opt.width = 380
                 xl_img_opt.height = 520
                 ws_map.add_image(xl_img_opt, f"{col_let_opt}{img_row_opt}")
+
+        # 最適解の凡例出力
+        write_legend_block_to_excel(ws_map, col_num_opt, legend_start_row, opt_legend_info)
 
         ws_map.column_dimensions['A'].width = 14.3
         ws_map.column_dimensions['B'].width = 21.5
