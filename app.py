@@ -300,6 +300,57 @@ EXTRA_SEEDS = {
     '泉佐野市': [(236, 1101)]
 }
 
+# ① 地図色塗り優先順位＆混色算出関数
+def get_city_fill_color_and_mix(bulk_comp, bulk_off, j_indiv, t_indiv, j_cmap, t_cmap):
+    bulk_comp = str(bulk_comp).strip()
+    bulk_off = str(bulk_off).strip()
+    j_indiv = str(j_indiv).strip()
+    t_indiv = str(t_indiv).strip()
+    
+    def find_office_color(off_name, preferred_comp=None):
+        clean_name = off_name.replace('(委託)', '').replace('（委託）', '').strip()
+        if preferred_comp == 'J社':
+            if clean_name in j_cmap: return j_cmap[clean_name]
+            if off_name in j_cmap: return j_cmap[off_name]
+        elif preferred_comp == 'T社':
+            if clean_name in t_cmap: return t_cmap[clean_name]
+            if off_name in t_cmap: return t_cmap[off_name]
+        if clean_name in j_cmap: return j_cmap[clean_name]
+        if off_name in j_cmap: return j_cmap[off_name]
+        if clean_name in t_cmap: return t_cmap[clean_name]
+        if off_name in t_cmap: return t_cmap[off_name]
+        return None
+
+    # 優先順位1: 一括担当営業所の色で塗りつぶし
+    if bulk_off not in ['-', 'nan', 'None', '']:
+        c = find_office_color(bulk_off, bulk_comp if bulk_comp in ['J社', 'T社'] else None)
+        if c is not None:
+            return c, None
+
+    # 優先順位2: 一括担当営業所が「-」の場合でJ社個別、T社個別に入力がある場合
+    has_j = j_indiv not in ['-', 'nan', 'None', '']
+    has_t = t_indiv not in ['-', 'nan', 'None', '']
+    
+    if has_j and has_t:
+        cj = find_office_color(j_indiv, 'J社') or (239, 68, 68)
+        ct = find_office_color(t_indiv, 'T社') or (59, 130, 246)
+        mixed_rgb = (
+            int((cj[0] + ct[0]) // 2),
+            int((cj[1] + ct[1]) // 2),
+            int((cj[2] + ct[2]) // 2)
+        )
+        mix_label = f"J社:{j_indiv} × T社:{t_indiv}"
+        return mixed_rgb, (mix_label, mixed_rgb)
+    elif has_j:
+        cj = find_office_color(j_indiv, 'J社') or (239, 68, 68)
+        return cj, None
+    elif has_t:
+        ct = find_office_color(t_indiv, 'T社') or (59, 130, 246)
+        return ct, None
+
+    # 優先順位3: J社個別、T社個別にも入力がない場合は灰色で塗りつぶし
+    return (200, 200, 200), None
+
 # 4. 距離・トンキロ算出関数
 def compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_indiv_off, wt_j_kg, wt_t_kg, office_info, municipal_coords):
     c_lat, c_lon = municipal_coords.get(city_name, (34.6853, 135.5208))
@@ -369,7 +420,7 @@ for p_idx in [1, 2, 3, 4]:
     if key_name not in st.session_state:
         st.session_state[key_name] = build_initial_scenario_df(EXISTING_OFFICES_INFO).copy(deep=True)
 
-# 条件（T社廃止拠点＝「東大阪」固定、現状が「委託」エリアは変更不可）を組み込んだ全体最適化エンジン
+# 全体最適化エンジン（T社廃止拠点＝「東大阪」固定、現状が「委託」エリアは変更不可）
 @st.cache_data
 def solve_optimal_scenario_cached(df_j_in, df_t_in):
     j_existing_list = [k[1] for k in EXISTING_OFFICES_INFO.keys() if k[0] == 'J社']
@@ -587,6 +638,98 @@ if imported_scenario_file is not None:
     except Exception as e_imp:
         st.sidebar.error(f"Excel取り込みエラー: {e_imp}")
 
+# 白地図生成共通ヘルパー関数（優先順位1〜3＆混色凡例リスト返却）
+def render_osaka_map_and_collect_mixes(df_map_source, j_cmap, t_cmap):
+    map_img_path = None
+    for target_path in ["画像4_2.png", "画像4_2.jpg", "画像4.png", "画像3.jpg"]:
+        if os.path.exists(target_path):
+            map_img_path = target_path
+            break
+
+    used_mixes = {}
+    if not map_img_path or not os.path.exists(map_img_path):
+        return None, used_mixes
+
+    src_img = cv2.imread(map_img_path)
+    src_img = cv2.resize(src_img, (1024, 1400), interpolation=cv2.INTER_AREA)
+    h, w, _ = src_img.shape
+    
+    gray = cv2.cvtColor(src_img, cv2.COLOR_BGR2GRAY)
+    line_bin = (gray > 40).astype(np.uint8) * 255
+        
+    kernel = np.ones((3, 3), np.uint8)
+    line_bin_dilated = cv2.dilate(line_bin, kernel, iterations=1)
+    
+    canvas_rgb = np.full((h, w, 3), 255, dtype=np.uint8)
+    canvas_rgb[line_bin_dilated == 255] = (0, 0, 0)
+    
+    bg_protection_mask = np.zeros((h + 2, w + 2), np.uint8)
+    cv2.floodFill(canvas_rgb.copy(), bg_protection_mask, (0, 0), (255, 255, 255), (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
+
+    # シティ名からデータ行をマッピング
+    city_row_map = {}
+    for _, r_m in df_map_source.iterrows():
+        city_row_map[str(r_m['市町村名']).strip()] = r_m
+
+    for c_name, (sx, sy) in CITY_SEEDS.items():
+        r_data = city_row_map.get(c_name)
+        if r_data is not None:
+            fill_rgb, mix_entry = get_city_fill_color_and_mix(
+                r_data.get('市町村一括担当', 'なし'),
+                r_data.get('市町村一括担当営業所', '-'),
+                r_data.get('J社個別', '-'),
+                r_data.get('T社個別', '-'),
+                j_cmap, t_cmap
+            )
+            if mix_entry is not None:
+                used_mixes[mix_entry[0]] = mix_entry[1]
+        else:
+            fill_rgb = (200, 200, 200)
+
+        target_coords = [(sx, sy)]
+        if c_name in EXTRA_SEEDS:
+            target_coords.extend(EXTRA_SEEDS[c_name])
+            
+        for cs_x, cs_y in target_coords:
+            cs_x = int(cs_x)
+            cs_y = int(cs_y)
+            if 0 <= cs_x < w and 0 <= cs_y < h:
+                if line_bin_dilated[cs_y, cs_x] == 255:
+                    found = False
+                    for r in range(1, 15):
+                        for dy in range(-r, r+1):
+                            for dx in range(-r, r+1):
+                                nx, ny = cs_x + dx, cs_y + dy
+                                if 0 <= nx < w and 0 <= ny < h and line_bin_dilated[ny, nx] == 0:
+                                    cs_x, cs_y = nx, ny
+                                    found = True
+                                    break
+                            if found: break
+                        if found: break
+
+                if 0 <= cs_x < w and 0 <= cs_y < h and line_bin_dilated[cs_y, cs_x] == 0:
+                    m_curr = bg_protection_mask.copy()
+                    cv2.floodFill(canvas_rgb, m_curr, (cs_x, cs_y), fill_rgb, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
+
+    canvas_rgb[line_bin_dilated == 255] = (0, 0, 0)
+
+    gray_check = cv2.cvtColor(canvas_rgb, cv2.COLOR_RGB2GRAY)
+    non_bg = np.where(gray_check < 250)
+    
+    if len(non_bg[0]) > 0:
+        min_y, max_y = np.min(non_bg[0]), np.max(non_bg[0])
+        min_x, max_x = np.min(non_bg[1]), np.max(non_bg[1])
+        pad = 12
+        crop_min_y = max(0, min_y - pad)
+        crop_max_y = min(h, max_y + pad)
+        crop_min_x = max(0, min_x - pad)
+        crop_max_x = min(w, max_x + pad)
+        cropped_img = canvas_rgb[crop_min_y:crop_max_y, crop_min_x:crop_max_x]
+    else:
+        cropped_img = canvas_rgb
+
+    return cropped_img, used_mixes
+
 # 5. タブUI構成
 tab_names = [
     "📊 全体サマリー＆現状比較",
@@ -600,7 +743,6 @@ tab_names = [
 tabs = st.tabs(tab_names)
 
 pattern_active_records = {1: [], 2: [], 3: [], 4: []}
-pattern_map_status = {1: {}, 2: {}, 3: {}, 4: {}}
 pattern_map_images = {1: None, 2: None, 3: None, 4: None}
 
 display_cols = [
@@ -706,7 +848,6 @@ for p_idx in [1, 2, 3, 4]:
             st.rerun()
 
         p_active = []
-        p_map_dict = {}
         for idx, r in edited_p_df.iterrows():
             orig = curr_p_df.loc[idx]
             city_name = orig['市町村名']
@@ -738,13 +879,6 @@ for p_idx in [1, 2, 3, 4]:
             wt_j_t = wt_j_kg / 1000.0
             wt_t_t = wt_t_kg / 1000.0
             
-            p_map_dict[city_name] = {
-                '一括担当': bulk_comp,
-                '一括営業所': bulk_off if bulk_off != '-' else (j_indiv_off if bulk_comp == 'J社' and j_indiv_off != '-' else (t_indiv_off if bulk_comp == 'T社' and t_indiv_off != '-' else orig['_j_def_off'] if bulk_comp == 'J社' else orig['_t_def_off'])),
-                'j_indiv_off': j_indiv_off,
-                't_indiv_off': t_indiv_off
-            }
-            
             has_indiv = (j_indiv_off != '-') or (t_indiv_off != '-')
             if has_indiv:
                 if j_indiv_off != '-':
@@ -775,118 +909,47 @@ for p_idx in [1, 2, 3, 4]:
 
         st.session_state[f"table_data_p{p_idx}"] = curr_p_df
         pattern_active_records[p_idx] = p_active
-        pattern_map_status[p_idx] = p_map_dict
+
+        # ① & ② マップ生成と混色凡例の自動表示
+        cropped_img, used_mixes_p = render_osaka_map_and_collect_mixes(curr_p_df, j_color_map_p, t_color_map_p)
+        pattern_map_images[p_idx] = cropped_img
 
         st.markdown("---")
         st.subheader(f"🗺️ 案{p_idx} 白地図エリアマップ")
         
         st.markdown("##### 📌 営業所別 カラー凡例（拡大カラーブロック表示）")
-        leg_cols = st.columns(2)
+        leg_cols = st.columns(3)
         with leg_cols[0]:
             st.write("**🔴 J社 営業所**")
             for off in j_offices_p:
                 c = j_color_map_p.get(off, (239, 68, 68))
                 hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
-                st.markdown(f'<span style="color:{hex_c}; font-size:48px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:18px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
+                st.markdown(f'<span style="color:{hex_c}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:16px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
                 
         with leg_cols[1]:
             st.write("**🔵 T社 営業所**")
             for off in t_offices_p:
                 c = t_color_map_p.get(off, (59, 130, 246))
                 hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
-                st.markdown(f'<span style="color:{hex_c}; font-size:48px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:18px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
+                st.markdown(f'<span style="color:{hex_c}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:16px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
+
+        with leg_cols[2]:
+            st.write("**🟣 混色（J社個別 × T社個別）**")
+            if used_mixes_p:
+                for mix_lbl, m_rgb in sorted(used_mixes_p.items()):
+                    hex_m = f"#{m_rgb[0]:02x}{m_rgb[1]:02x}{m_rgb[2]:02x}"
+                    st.markdown(f'<span style="color:{hex_m}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:15px; font-weight:bold; vertical-align:middle;">{mix_lbl}</span>', unsafe_allow_html=True)
+            else:
+                st.caption("（混色エリアなし）")
+            st.markdown('<span style="color:#C8C8C8; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:15px; font-weight:bold; vertical-align:middle;">未割り当て（灰色）</span>', unsafe_allow_html=True)
 
         st.write("")
-
-        map_img_path = None
-        for target_path in ["画像4_2.png", "画像4_2.jpg", "画像4.png", "画像3.jpg"]:
-            if os.path.exists(target_path):
-                map_img_path = target_path
-                break
-
-        if map_img_path and os.path.exists(map_img_path):
-            src_img = cv2.imread(map_img_path)
-            src_img = cv2.resize(src_img, (1024, 1400), interpolation=cv2.INTER_AREA)
-            h, w, _ = src_img.shape
-            
-            gray = cv2.cvtColor(src_img, cv2.COLOR_BGR2GRAY)
-            line_bin = (gray > 40).astype(np.uint8) * 255
-                
-            kernel = np.ones((3, 3), np.uint8)
-            line_bin_dilated = cv2.dilate(line_bin, kernel, iterations=1)
-            
-            canvas_rgb = np.full((h, w, 3), 255, dtype=np.uint8)
-            canvas_rgb[line_bin_dilated == 255] = (0, 0, 0)
-            
-            bg_protection_mask = np.zeros((h + 2, w + 2), np.uint8)
-            cv2.floodFill(canvas_rgb.copy(), bg_protection_mask, (0, 0), (255, 255, 255), (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
-
-            for c_name, (sx, sy) in CITY_SEEDS.items():
-                info = p_map_dict.get(c_name, {'一括担当': 'なし', '一括営業所': '-', 'j_indiv_off': '-', 't_indiv_off': '-'})
-                bulk = info['一括担当']
-                bulk_off = info['一括営業所']
-                j_indiv_off = info.get('j_indiv_off', '-')
-                t_indiv_off = info.get('t_indiv_off', '-')
-                
-                if bulk == 'J社' and bulk_off in j_color_map_p:
-                    fill_rgb = j_color_map_p[bulk_off]
-                elif bulk == 'T社' and bulk_off in t_color_map_p:
-                    fill_rgb = t_color_map_p[bulk_off]
-                elif bulk in ['なし', '-'] and ((j_indiv_off != '-') or (t_indiv_off != '-')):
-                    fill_rgb = (200, 200, 200) # 個別選択あり＝灰色
-                else:
-                    fill_rgb = (255, 255, 255) # 未設定＝白色
-
-                target_coords = [(sx, sy)]
-                if c_name in EXTRA_SEEDS:
-                    target_coords.extend(EXTRA_SEEDS[c_name])
-                    
-                for cs_x, cs_y in target_coords:
-                    # 安全境界ガード（IndexError完全回避）
-                    cs_x = int(cs_x)
-                    cs_y = int(cs_y)
-                    if 0 <= cs_x < w and 0 <= cs_y < h:
-                        if line_bin_dilated[cs_y, cs_x] == 255:
-                            found = False
-                            for r in range(1, 15):
-                                for dy in range(-r, r+1):
-                                    for dx in range(-r, r+1):
-                                        nx, ny = cs_x + dx, cs_y + dy
-                                        if 0 <= nx < w and 0 <= ny < h and line_bin_dilated[ny, nx] == 0:
-                                            cs_x, cs_y = nx, ny
-                                            found = True
-                                            break
-                                    if found: break
-                                if found: break
-
-                        if 0 <= cs_x < w and 0 <= cs_y < h and line_bin_dilated[cs_y, cs_x] == 0:
-                            m_curr = bg_protection_mask.copy()
-                            cv2.floodFill(canvas_rgb, m_curr, (cs_x, cs_y), fill_rgb, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
-
-            canvas_rgb[line_bin_dilated == 255] = (0, 0, 0)
-
-            gray_check = cv2.cvtColor(canvas_rgb, cv2.COLOR_RGB2GRAY)
-            non_bg = np.where(gray_check < 250)
-            
-            if len(non_bg[0]) > 0:
-                min_y, max_y = np.min(non_bg[0]), np.max(non_bg[0])
-                min_x, max_x = np.min(non_bg[1]), np.max(non_bg[1])
-                pad = 12
-                crop_min_y = max(0, min_y - pad)
-                crop_max_y = min(h, max_y + pad)
-                crop_min_x = max(0, min_x - pad)
-                crop_max_x = min(w, max_x + pad)
-                cropped_img = canvas_rgb[crop_min_y:crop_max_y, crop_min_x:crop_max_x]
-            else:
-                cropped_img = canvas_rgb
-
-            pattern_map_images[p_idx] = cropped_img
-
+        if cropped_img is not None:
             map_col1, map_col2, map_col3 = st.columns([1, 4, 1])
             with map_col2:
                 st.image(cropped_img, width=600)
 
-# ③ UIタブ「⭐ 最適解：受持選択」のレンダリング（白地図エリアマップ画像付き ＆ 境界ガード保護）
+# UIタブ「⭐ 最適解：受持選択」のレンダリング
 with tabs[6]:
     st.subheader("⭐ トンキロ最小化：全体最適解（1拠点新設 ＆ 既存2拠点廃止）")
     st.caption("数学的最適化アルゴリズムにより、全体トンキロが最も小さくなる「新規共同拠点の1箇所設置」および「J社・T社既存拠点の各1箇所廃止」の最小化構成を全自動計算した結果です。")
@@ -920,7 +983,6 @@ with tabs[6]:
         hide_index=True
     )
 
-    # ③ 最適解の白地図エリアマップ描画（完全境界ガード保護）
     st.markdown("---")
     st.subheader("🗺️ 最適解 白地図エリアマップ")
     opt_custom_offices = [
@@ -929,109 +991,37 @@ with tabs[6]:
     ]
     j_cmap_opt, t_cmap_opt, j_offs_opt, t_offs_opt = generate_office_colors(df_j, df_t, opt_custom_offices)
     
+    # ① & ② 最適解マップ生成と混色凡例の自動表示
+    opt_map_image, used_mixes_opt = render_osaka_map_and_collect_mixes(best_opt_res['df'], j_cmap_opt, t_cmap_opt)
+
     st.markdown("##### 📌 営業所別 カラー凡例（拡大カラーブロック表示）")
-    leg_cols_opt = st.columns(2)
+    leg_cols_opt = st.columns(3)
     with leg_cols_opt[0]:
         st.write("**🔴 J社 営業所**")
         for off in j_offs_opt:
             c = j_cmap_opt.get(off, (239, 68, 68))
             hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
-            st.markdown(f'<span style="color:{hex_c}; font-size:48px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:18px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
+            st.markdown(f'<span style="color:{hex_c}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:16px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
             
     with leg_cols_opt[1]:
         st.write("**🔵 T社 営業所**")
         for off in t_offs_opt:
             c = t_cmap_opt.get(off, (59, 130, 246))
             hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
-            st.markdown(f'<span style="color:{hex_c}; font-size:48px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:18px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
+            st.markdown(f'<span style="color:{hex_c}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:16px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
+
+    with leg_cols_opt[2]:
+        st.write("**🟣 混色（J社個別 × T社個別）**")
+        if used_mixes_opt:
+            for mix_lbl, m_rgb in sorted(used_mixes_opt.items()):
+                hex_m = f"#{m_rgb[0]:02x}{m_rgb[1]:02x}{m_rgb[2]:02x}"
+                st.markdown(f'<span style="color:{hex_m}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:15px; font-weight:bold; vertical-align:middle;">{mix_lbl}</span>', unsafe_allow_html=True)
+        else:
+            st.caption("（混色エリアなし）")
+        st.markdown('<span style="color:#C8C8C8; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:15px; font-weight:bold; vertical-align:middle;">未割り当て（灰色）</span>', unsafe_allow_html=True)
 
     st.write("")
-
-    map_img_path_opt = None
-    for target_path in ["画像4_2.png", "画像4_2.jpg", "画像4.png", "画像3.jpg"]:
-        if os.path.exists(target_path):
-            map_img_path_opt = target_path
-            break
-
-    opt_map_image = None
-    if map_img_path_opt and os.path.exists(map_img_path_opt):
-        src_img_o = cv2.imread(map_img_path_opt)
-        src_img_o = cv2.resize(src_img_o, (1024, 1400), interpolation=cv2.INTER_AREA)
-        h_o, w_o, _ = src_img_o.shape
-        
-        gray_o = cv2.cvtColor(src_img_o, cv2.COLOR_BGR2GRAY)
-        line_bin_o = (gray_o > 40).astype(np.uint8) * 255
-            
-        kernel_o = np.ones((3, 3), np.uint8)
-        line_bin_dilated_o = cv2.dilate(line_bin_o, kernel_o, iterations=1)
-        
-        canvas_rgb_o = np.full((h_o, w_o, 3), 255, dtype=np.uint8)
-        canvas_rgb_o[line_bin_dilated_o == 255] = (0, 0, 0)
-        
-        bg_protection_mask_o = np.zeros((h_o + 2, w_o + 2), np.uint8)
-        cv2.floodFill(canvas_rgb_o.copy(), bg_protection_mask_o, (0, 0), (255, 255, 255), (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
-
-        df_opt_map = best_opt_res['df']
-        for _, r_opt_m in df_opt_map.iterrows():
-            c_name_m = r_opt_m['市町村名']
-            bulk_m = r_opt_m['市町村一括担当']
-            bulk_off_m = r_opt_m['市町村一括担当営業所']
-            j_ind_m = r_opt_m['J社個別']
-            t_ind_m = r_opt_m['T社個別']
-            
-            if bulk_m == 'J社' and bulk_off_m in j_cmap_opt:
-                fill_rgb_o = j_cmap_opt[bulk_off_m]
-            elif bulk_m == 'T社' and bulk_off_m in t_cmap_opt:
-                fill_rgb_o = t_cmap_opt[bulk_off_m]
-            elif bulk_m in ['なし', '-'] and ((j_ind_m != '-') or (t_ind_m != '-')):
-                fill_rgb_o = (200, 200, 200)
-            else:
-                fill_rgb_o = (255, 255, 255)
-
-            if c_name_m in CITY_SEEDS:
-                sx_o, sy_o = CITY_SEEDS[c_name_m]
-                target_coords_o = [(sx_o, sy_o)]
-                if c_name_m in EXTRA_SEEDS:
-                    target_coords_o.extend(EXTRA_SEEDS[c_name_m])
-                    
-                for cs_x_o, cs_y_o in target_coords_o:
-                    cs_x_o = int(cs_x_o)
-                    cs_y_o = int(cs_y_o)
-                    # 完全安全境界ガード
-                    if 0 <= cs_x_o < w_o and 0 <= cs_y_o < h_o:
-                        if line_bin_dilated_o[cs_y_o, cs_x_o] == 255:
-                            found_o = False
-                            for r_o in range(1, 15):
-                                for dy_o in range(-r_o, r_o+1):
-                                    for dx_o in range(-r_o, r_o+1):
-                                        nx_o, ny_o = cs_x_o + dx_o, cs_y_o + dy_o
-                                        if 0 <= nx_o < w_o and 0 <= ny_o < h_o and line_bin_dilated_o[ny_o, nx_o] == 0:
-                                            cs_x_o, cs_y_o = nx_o, ny_o
-                                            found_o = True
-                                            break
-                                    if found_o: break
-                                if found_o: break
-
-                        if 0 <= cs_x_o < w_o and 0 <= cs_y_o < h_o and line_bin_dilated_o[cs_y_o, cs_x_o] == 0:
-                            m_curr_o = bg_protection_mask_o.copy()
-                            cv2.floodFill(canvas_rgb_o, m_curr_o, (cs_x_o, cs_y_o), fill_rgb_o, (15, 15, 15), (15, 15, 15), cv2.FLOODFILL_FIXED_RANGE)
-
-        canvas_rgb_o[line_bin_dilated_o == 255] = (0, 0, 0)
-        gray_check_o = cv2.cvtColor(canvas_rgb_o, cv2.COLOR_RGB2GRAY)
-        non_bg_o = np.where(gray_check_o < 250)
-        
-        if len(non_bg_o[0]) > 0:
-            min_y_o, max_y_o = np.min(non_bg_o[0]), np.max(non_bg_o[0])
-            min_x_o, max_x_o = np.min(non_bg_o[1]), np.max(non_bg_o[1])
-            pad_o = 12
-            crop_min_y_o = max(0, min_y_o - pad_o)
-            crop_max_y_o = min(h_o, max_y_o + pad_o)
-            crop_min_x_o = max(0, min_x_o - pad_o)
-            crop_max_x_o = min(w_o, max_x_o + pad_o)
-            opt_map_image = canvas_rgb_o[crop_min_y_o:crop_max_y_o, crop_min_x_o:crop_max_x_o]
-        else:
-            opt_map_image = canvas_rgb_o
-
+    if opt_map_image is not None:
         map_col1_o, map_col2_o, map_col3_o = st.columns([1, 4, 1])
         with map_col2_o:
             st.image(opt_map_image, width=600)
@@ -1113,8 +1103,6 @@ with tabs[0]:
     summary_df = pd.DataFrame(summary_rows)
 
     cur_comb_tk_total = cur_j_tk_total + cur_t_tk_total
-    cur_comb_wt_total = cur_j_wt_total + cur_t_wt_total
-    
     comb_summary_rows = []
     
     comb_summary_rows.append({
