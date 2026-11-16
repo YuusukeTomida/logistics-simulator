@@ -495,9 +495,9 @@ for p_idx in [1, 2, 3, 4]:
     if key_name not in st.session_state:
         st.session_state[key_name] = build_initial_scenario_df(EXISTING_OFFICES_INFO).copy(deep=True)
 
-# 全体最適化エンジン（T社廃止拠点＝「東大阪」固定、現状が「委託」エリアは変更不可）
+# 全体最適化エンジン（T社廃止拠点＝「東大阪」固定、会社個別に委託エリアは現状維持・非委託側は最適再配置）
 @st.cache_data
-def solve_optimal_scenario_cached(df_j_in, df_t_in):
+def solve_optimal_scenario_v2(df_j_in, df_t_in):
     j_existing_list = [k[1] for k in EXISTING_OFFICES_INFO.keys() if k[0] == 'J社']
     t_close_fixed = '東大阪'
     
@@ -515,14 +515,13 @@ def solve_optimal_scenario_cached(df_j_in, df_t_in):
         
         is_j_sub = ('委託' in off_j_def) or (str(df_j_in.loc[i, 'J社外部委託地域']).strip() == '◯' if 'J社外部委託地域' in df_j_in.columns else False)
         is_t_sub = ('委託' in off_t_def) or (str(df_t_in.loc[i, 'T社外部委託地域']).strip() == '◯' if 'T社外部委託地域' in df_t_in.columns else False)
-        is_sub = is_j_sub or is_t_sub
         
         c_lat, c_lon = MUNICIPAL_HALL_COORDS.get(c_name, (34.6853, 135.5208))
         cities.append({
             'code': c_code, 'name': c_name, 'wt_j': wt_j, 'wt_t': wt_t,
             'lat': c_lat, 'lon': c_lon,
             'orig_j': off_j_def, 'orig_t': off_t_def,
-            'is_sub': is_sub
+            'is_j_sub': is_j_sub, 'is_t_sub': is_t_sub
         })
 
     for candidate_city, cand_coords in MUNICIPAL_HALL_COORDS.items():
@@ -541,46 +540,43 @@ def solve_optimal_scenario_cached(df_j_in, df_t_in):
                 c_lat, c_lon = c_item['lat'], c_item['lon']
                 wt_j_ton = c_item['wt_j'] / 1000.0
                 wt_t_ton = c_item['wt_t'] / 1000.0
+                is_j_sub = c_item['is_j_sub']
+                is_t_sub = c_item['is_t_sub']
                 
-                if c_item['is_sub']:
-                    orig_j_clean = c_item['orig_j'].replace('(委託)', '').strip()
-                    orig_t_clean = c_item['orig_t'].replace('(委託)', '').strip()
-                    
-                    j_coords = active_j_offices.get(orig_j_clean, EXISTING_OFFICES_INFO.get(('J社', orig_j_clean), {}).get('coords', (c_lat, c_lon)))
-                    t_coords = active_t_offices.get(orig_t_clean, EXISTING_OFFICES_INFO.get(('T社', orig_t_clean), {}).get('coords', (c_lat, c_lon)))
-                    
-                    dj = calc_haversine_distance(j_coords[0], j_coords[1], c_lat, c_lon) if j_coords else 0.0
-                    dt = calc_haversine_distance(t_coords[0], t_coords[1], c_lat, c_lon) if t_coords else 0.0
-                    
-                    tk_j_c = round(dj * wt_j_ton, 2)
-                    tk_t_c = round(dt * wt_t_ton, 2)
-                    total_tk += (tk_j_c + tk_t_c)
-                    
-                    city_assignments.append({
-                        '市町村コード': c_item['code'], '市町村名': c_item['name'],
-                        '市町村一括担当': 'なし', '市町村一括担当営業所': '-',
-                        'J社個別': c_item['orig_j'], 'T社個別': c_item['orig_t'],
-                        'J社 距離(km)': dj, 'J社 配達重量(kg)': c_item['wt_j'], 'J社 トンキロ(t・km)': tk_j_c,
-                        'T社 距離(km)': dt, 'T社 配達重量(kg)': c_item['wt_t'], 'T社 トンキロ(t・km)': tk_t_c,
-                        '_j_def_off': c_item['orig_j'], '_t_def_off': c_item['orig_t']
-                    })
+                # J社の個別最適割り当て（J社が委託の場合は現状のまま変更しない）
+                if is_j_sub:
+                    j_ind_candidate = c_item['orig_j']
+                    orig_j_clean = j_ind_candidate.replace('(委託)', '').replace('（委託）', '').strip()
+                    j_coords = active_j_offices.get(orig_j_clean, EXISTING_OFFICES_INFO.get(('J社', orig_j_clean), {}).get('coords'))
+                    best_j_dist = calc_haversine_distance(j_coords[0], j_coords[1], c_lat, c_lon) if j_coords else 0.0
                 else:
-                    best_j_off, best_j_dist = min(
+                    j_ind_candidate, best_j_dist = min(
                         ((off, calc_haversine_distance(coords[0], coords[1], c_lat, c_lon)) for off, coords in active_j_offices.items()),
                         key=lambda x: x[1]
                     )
-                    best_t_off, best_t_dist = min(
+
+                # T社の個別最適割り当て（T社が委託の場合は現状のまま変更しない。そうでなければ廃止拠点「東大阪」を除いた拠点から最短選択）
+                if is_t_sub:
+                    t_ind_candidate = c_item['orig_t']
+                    orig_t_clean = t_ind_candidate.replace('(委託)', '').replace('（委託）', '').strip()
+                    t_coords = active_t_offices.get(orig_t_clean, EXISTING_OFFICES_INFO.get(('T社', orig_t_clean), {}).get('coords'))
+                    best_t_dist = calc_haversine_distance(t_coords[0], t_coords[1], c_lat, c_lon) if t_coords else 0.0
+                else:
+                    t_ind_candidate, best_t_dist = min(
                         ((off, calc_haversine_distance(coords[0], coords[1], c_lat, c_lon)) for off, coords in active_t_offices.items()),
                         key=lambda x: x[1]
                     )
-                    
+                
+                tk_indiv = (best_j_dist * wt_j_ton) + (best_t_dist * wt_t_ton)
+
+                # J社・T社のどちらも委託ではない場合のみ、一括担当（J社最適 / T社最適）への統合を比較検討
+                if not is_j_sub and not is_t_sub:
                     dist_bulk_j = calc_haversine_distance(cand_coords[0], cand_coords[1], c_lat, c_lon)
                     tk_bulk_j = dist_bulk_j * (wt_j_ton + wt_t_ton)
                     
                     dist_bulk_t = calc_haversine_distance(cand_coords[0], cand_coords[1], c_lat, c_lon)
                     tk_bulk_t = dist_bulk_t * (wt_j_ton + wt_t_ton)
                     
-                    tk_indiv = (best_j_dist * wt_j_ton) + (best_t_dist * wt_t_ton)
                     min_c_tk = min(tk_indiv, tk_bulk_j, tk_bulk_t)
                     
                     if min_c_tk == tk_bulk_j and wt_t_ton > 0:
@@ -593,21 +589,25 @@ def solve_optimal_scenario_cached(df_j_in, df_t_in):
                         dj, dt = dist_bulk_t, dist_bulk_t
                     else:
                         bulk_comp, bulk_off = 'なし', '-'
-                        j_ind, t_ind = best_j_off, best_t_off
+                        j_ind, t_ind = j_ind_candidate, t_ind_candidate
                         dj, dt = best_j_dist, best_t_dist
-                        
-                    tk_j_c = round(dj * wt_j_ton, 2)
-                    tk_t_c = round(dt * wt_t_ton, 2)
-                    total_tk += (tk_j_c + tk_t_c)
+                else:
+                    bulk_comp, bulk_off = 'なし', '-'
+                    j_ind, t_ind = j_ind_candidate, t_ind_candidate
+                    dj, dt = best_j_dist, best_t_dist
                     
-                    city_assignments.append({
-                        '市町村コード': c_item['code'], '市町村名': c_item['name'],
-                        '市町村一括担当': bulk_comp, '市町村一括担当営業所': bulk_off,
-                        'J社個別': j_ind, 'T社個別': t_ind,
-                        'J社 距離(km)': dj, 'J社 配達重量(kg)': c_item['wt_j'], 'J社 トンキロ(t・km)': tk_j_c,
-                        'T社 距離(km)': dt, 'T社 配達重量(kg)': c_item['wt_t'], 'T社 トンキロ(t・km)': tk_t_c,
-                        '_j_def_off': c_item['orig_j'], '_t_def_off': c_item['orig_t']
-                    })
+                tk_j_c = round(dj * wt_j_ton, 2)
+                tk_t_c = round(dt * wt_t_ton, 2)
+                total_tk += (tk_j_c + tk_t_c)
+                
+                city_assignments.append({
+                    '市町村コード': c_item['code'], '市町村名': c_item['name'],
+                    '市町村一括担当': bulk_comp, '市町村一括担当営業所': bulk_off,
+                    'J社個別': j_ind, 'T社個別': t_ind,
+                    'J社 距離(km)': dj, 'J社 配達重量(kg)': c_item['wt_j'], 'J社 トンキロ(t・km)': tk_j_c,
+                    'T社 距離(km)': dt, 'T社 配達重量(kg)': c_item['wt_t'], 'T社 トンキロ(t・km)': tk_t_c,
+                    '_j_def_off': c_item['orig_j'], '_t_def_off': c_item['orig_t']
+                })
                     
             if total_tk < best_total_tk:
                 best_total_tk = total_tk
@@ -623,7 +623,7 @@ def solve_optimal_scenario_cached(df_j_in, df_t_in):
 
     return best_config
 
-best_opt_res = solve_optimal_scenario_cached(df_j, df_t)
+best_opt_res = solve_optimal_scenario_v2(df_j, df_t)
 
 # 変更案設定Excelファイルの取り込み処理
 imported_scenario_file = st.sidebar.file_uploader("変更案設定Excelを選択 (案1〜4)", type=["xlsx"], key="scenario_excel_uploader")
@@ -1258,12 +1258,35 @@ with tabs[0]:
         summary_rows.append({'パターン': f'案{p_idx}', '会社': 'T社', '担当自治体数': t_cnt, '配達重量_t': round(t_wt_sum, 2), 'トンキロ': round(t_tk_sum, 2), 'トンキロ削減量': round(t_diff, 2), '削減率(%)': t_pct})
 
     df_opt_calc = best_opt_res['df']
-    opt_j_tk_sum = df_opt_calc['J社 トンキロ(t・km)'].sum()
-    opt_t_tk_sum = df_opt_calc['T社 トンキロ(t・km)'].sum()
-    opt_j_wt_sum = df_opt_calc['J社 配達重量(kg)'].sum() / 1000.0
-    opt_t_wt_sum = df_opt_calc['T社 配達重量(kg)'].sum() / 1000.0
-    opt_j_cnt = len(df_opt_calc[df_opt_calc['J社 トンキロ(t・km)'] > 0])
-    opt_t_cnt = len(df_opt_calc[df_opt_calc['T社 トンキロ(t・km)'] > 0])
+    opt_j_tk_sum = 0.0; opt_t_tk_sum = 0.0
+    opt_j_wt_sum = 0.0; opt_t_wt_sum = 0.0
+    opt_j_cnt = 0; opt_t_cnt = 0
+
+    for _, r in df_opt_calc.iterrows():
+        bulk = str(r['市町村一括担当']).strip()
+        j_tk = float(r['J社 トンキロ(t・km)'])
+        t_tk = float(r['T社 トンキロ(t・km)'])
+        j_wt = float(r['J社 配達重量(kg)']) / 1000.0
+        t_wt = float(r['T社 配達重量(kg)']) / 1000.0
+        
+        if bulk == 'J社':
+            opt_j_tk_sum += (j_tk + t_tk)
+            opt_j_wt_sum += (j_wt + t_wt)
+            opt_j_cnt += 1
+        elif bulk == 'T社':
+            opt_t_tk_sum += (j_tk + t_tk)
+            opt_t_wt_sum += (j_wt + t_wt)
+            opt_t_cnt += 1
+        else:
+            opt_j_tk_sum += j_tk
+            opt_j_wt_sum += j_wt
+            if j_tk > 0 or str(r['J社個別']).strip() != '-':
+                opt_j_cnt += 1
+                
+            opt_t_tk_sum += t_tk
+            opt_t_wt_sum += t_wt
+            if t_tk > 0 or str(r['T社個別']).strip() != '-':
+                opt_t_cnt += 1
 
     opt_j_diff = cur_j_tk_total - opt_j_tk_sum
     opt_j_pct = round((opt_j_diff / cur_j_tk_total * 100), 1) if cur_j_tk_total > 0 else 0.0
@@ -1474,7 +1497,7 @@ with tabs[0]:
                 c_lbl_gray = ws_target.cell(row=curr_r, column=start_col_idx + 1, value="未割り当て（灰色）")
                 c_lbl_gray.font = Font(name='BIZ UDPゴシック', size=9)
 
-        # 配置マッピング（上段: 全体マップ 13〜14行 / ② 下段: 一括担当限定マップ 48〜49行 / ③ 凡例: 80行〜）
+        # 配置マッピング（上段: 全体マップ 13〜14行 / 下段: 一括担当限定マップ 48〜49行 / 凡例: 80行〜）
         map_cell_positions = {
             1: ('B', 2, 13, 14, 48, 49),    # 案1
             2: ('E', 5, 13, 14, 48, 49),    # 案2
@@ -1486,11 +1509,9 @@ with tabs[0]:
         ws_map['A12'] = "【1. 全体受持エリア 白地図マップ】"
         ws_map['A12'].font = Font(name='BIZ UDPゴシック', size=11, bold=True)
         
-        # ① セルA47に記載
         ws_map['A47'] = "【2. 一括担当エリア限定 白地図マップ（J社・T社一括担当のみ着色）】"
         ws_map['A47'].font = Font(name='BIZ UDPゴシック', size=11, bold=True)
         
-        # ③ 凡例は80行目以下に入力
         legend_start_row = 80
         
         for p_i in [1, 2, 3, 4]:
@@ -1511,7 +1532,7 @@ with tabs[0]:
                     xl_img.height = 520
                     ws_map.add_image(xl_img, f"{col_let}{img_row1}")
 
-            # 2. ② 一括担当限定マップ（48行目以下）
+            # 2. 一括担当限定マップ（48行目以下）
             t_cell2 = ws_map[f"{col_let}{t_row2}"]
             t_cell2.value = f"■ 案{p_i} 一括担当マップ"
             t_cell2.font = Font(name='BIZ UDPゴシック', size=11, bold=True)
@@ -1526,7 +1547,7 @@ with tabs[0]:
                     xl_img2.height = 520
                     ws_map.add_image(xl_img2, f"{col_let}{img_row2}")
             
-            # ③ 凡例出力（80行目以下）
+            # 凡例出力（80行目以下）
             write_used_legend_block_to_excel(ws_map, col_num, legend_start_row, pattern_legend_info[p_i])
 
         # 最適解マップ（全体 & 一括担当）と凡例
@@ -1565,7 +1586,7 @@ with tabs[0]:
         ws_map.column_dimensions['E'].width = 13.7
         ws_map.column_dimensions['F'].width = 17.0
 
-        # ④ J列、K列、S列、T列、U列、AD列、AE列、AF列を非表示に設定
+        # J列、K列、S列、T列、U列、AD列、AE列、AF列を非表示に設定
         for hidden_col in ['J', 'K', 'S', 'T', 'U', 'AD', 'AE', 'AF']:
             ws_map.column_dimensions[hidden_col].hidden = True
 
