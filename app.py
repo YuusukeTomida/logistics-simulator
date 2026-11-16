@@ -255,7 +255,7 @@ for p_idx in [1, 2, 3, 4]:
     if key_name not in st.session_state:
         st.session_state[key_name] = []
 
-# 高コントラストカラーパレット定義（各営業所・組み合わせの差が明確にわかる鮮やかな色分け）
+# 高コントラストカラーパレット定義
 J_PALETTE = [
     (220, 38, 38),    # 鮮やかな赤 (Red)
     (249, 115, 22),   # オレンジ (Orange)
@@ -316,7 +316,7 @@ def generate_office_colors(df_j, df_t, custom_offices):
         
     return j_color_map, t_color_map, j_offices, t_offices
 
-# ピクセル座標定義（完全整数化）
+# ピクセル座標定義
 CITY_SEEDS = {
     '能勢町': (542, 143), '豊能町': (635, 232), '島本町': (897, 293), '高槻市': (816, 331), '枚方市': (923, 331),
     '池田市': (553, 351), '箕面市': (618, 359), '茨木市': (702, 292), '交野市': (932, 517), '豊中市': (592, 473),
@@ -342,32 +342,33 @@ EXTRA_SEEDS = {
     '泉佐野市': [(236, 1101)]
 }
 
-# 地図色塗り優先順位＆明確なコントラスト色の割り当て関数
-def get_city_fill_color_and_mix(bulk_comp, bulk_off, j_indiv, t_indiv, j_cmap, t_cmap, assigned_mix_colors):
+# ① 地図色塗り優先順位＆「使用中の色・営業所」を追跡する関数
+def get_city_fill_color_and_usage(bulk_comp, bulk_off, j_indiv, t_indiv, j_cmap, t_cmap, assigned_mix_colors):
     bulk_comp = str(bulk_comp).strip()
     bulk_off = str(bulk_off).strip()
     j_indiv = str(j_indiv).strip()
     t_indiv = str(t_indiv).strip()
     
-    def find_office_color(off_name, preferred_comp=None):
+    def find_office_key_and_color(off_name, preferred_comp=None):
         clean_name = off_name.replace('(委託)', '').replace('（委託）', '').strip()
         if preferred_comp == 'J社':
-            if clean_name in j_cmap: return j_cmap[clean_name]
-            if off_name in j_cmap: return j_cmap[off_name]
+            if clean_name in j_cmap: return ('J', clean_name, j_cmap[clean_name])
+            if off_name in j_cmap: return ('J', off_name, j_cmap[off_name])
         elif preferred_comp == 'T社':
-            if clean_name in t_cmap: return t_cmap[clean_name]
-            if off_name in t_cmap: return t_cmap[off_name]
-        if clean_name in j_cmap: return j_cmap[clean_name]
-        if off_name in j_cmap: return j_cmap[off_name]
-        if clean_name in t_cmap: return t_cmap[clean_name]
-        if off_name in t_cmap: return t_cmap[off_name]
+            if clean_name in t_cmap: return ('T', clean_name, t_cmap[clean_name])
+            if off_name in t_cmap: return ('T', off_name, t_cmap[off_name])
+        if clean_name in j_cmap: return ('J', clean_name, j_cmap[clean_name])
+        if off_name in j_cmap: return ('J', off_name, j_cmap[off_name])
+        if clean_name in t_cmap: return ('T', clean_name, t_cmap[clean_name])
+        if off_name in t_cmap: return ('T', off_name, t_cmap[off_name])
         return None
 
     # 優先順位1: 一括担当営業所の色で塗りつぶし
     if bulk_off not in ['-', 'nan', 'None', '']:
-        c = find_office_color(bulk_off, bulk_comp if bulk_comp in ['J社', 'T社'] else None)
-        if c is not None:
-            return c, None
+        res = find_office_key_and_color(bulk_off, bulk_comp if bulk_comp in ['J社', 'T社'] else None)
+        if res is not None:
+            comp_code, off_key, color = res
+            return color, (comp_code, off_key, color)
 
     # 優先順位2: 一括担当営業所が「-」の場合でJ社個別、T社個別に入力がある場合
     has_j = j_indiv not in ['-', 'nan', 'None', '']
@@ -379,16 +380,20 @@ def get_city_fill_color_and_mix(bulk_comp, bulk_off, j_indiv, t_indiv, j_cmap, t
             color_idx = len(assigned_mix_colors)
             assigned_mix_colors[mix_label] = MIX_PALETTE[color_idx % len(MIX_PALETTE)]
         distinct_rgb = assigned_mix_colors[mix_label]
-        return distinct_rgb, (mix_label, distinct_rgb)
+        return distinct_rgb, ('MIX', mix_label, distinct_rgb)
     elif has_j:
-        cj = find_office_color(j_indiv, 'J社') or (220, 38, 38)
-        return cj, None
+        res = find_office_key_and_color(j_indiv, 'J社')
+        if res is not None:
+            return res[2], ('J', res[1], res[2])
+        return (220, 38, 38), ('J', j_indiv, (220, 38, 38))
     elif has_t:
-        ct = find_office_color(t_indiv, 'T社') or (37, 99, 235)
-        return ct, None
+        res = find_office_key_and_color(t_indiv, 'T社')
+        if res is not None:
+            return res[2], ('T', res[1], res[2])
+        return (37, 99, 235), ('T', t_indiv, (37, 99, 235))
 
     # 優先順位3: J社個別、T社個別にも入力がない場合は灰色で塗りつぶし
-    return (200, 200, 200), None
+    return (200, 200, 200), ('GRAY', '未割り当て（灰色）', (200, 200, 200))
 
 # 4. 距離・トンキロ算出関数
 def compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_indiv_off, wt_j_kg, wt_t_kg, office_info, municipal_coords):
@@ -677,17 +682,17 @@ if imported_scenario_file is not None:
     except Exception as e_imp:
         st.sidebar.error(f"Excel取り込みエラー: {e_imp}")
 
-# 白地図生成共通ヘルパー関数（優先順位1〜3＆高コントラスト混色凡例リスト返却）
-def render_osaka_map_and_collect_mixes(df_map_source, j_cmap, t_cmap):
+# ① & ② 白地図生成共通ヘルパー関数（「地図に色塗りで使用しているものだけ」を凡例リストとして返却）
+def render_osaka_map_and_collect_used_legend(df_map_source, j_cmap, t_cmap):
     map_img_path = None
     for target_path in ["画像4_2.png", "画像4_2.jpg", "画像4.png", "画像3.jpg"]:
         if os.path.exists(target_path):
             map_img_path = target_path
             break
 
-    used_mixes = {}
+    used_legend = {'J': {}, 'T': {}, 'MIX': {}, 'GRAY': False}
     if not map_img_path or not os.path.exists(map_img_path):
-        return None, used_mixes
+        return None, used_legend
 
     src_img = cv2.imread(map_img_path)
     src_img = cv2.resize(src_img, (1024, 1400), interpolation=cv2.INTER_AREA)
@@ -714,17 +719,25 @@ def render_osaka_map_and_collect_mixes(df_map_source, j_cmap, t_cmap):
     for c_name, (sx, sy) in CITY_SEEDS.items():
         r_data = city_row_map.get(c_name)
         if r_data is not None:
-            fill_rgb, mix_entry = get_city_fill_color_and_mix(
+            fill_rgb, usage_tuple = get_city_fill_color_and_usage(
                 r_data.get('市町村一括担当', 'なし'),
                 r_data.get('市町村一括担当営業所', '-'),
                 r_data.get('J社個別', '-'),
                 r_data.get('T社個別', '-'),
                 j_cmap, t_cmap, assigned_mix_colors
             )
-            if mix_entry is not None:
-                used_mixes[mix_entry[0]] = mix_entry[1]
+            u_type, u_key, u_color = usage_tuple
+            if u_type == 'J':
+                used_legend['J'][u_key] = u_color
+            elif u_type == 'T':
+                used_legend['T'][u_key] = u_color
+            elif u_type == 'MIX':
+                used_legend['MIX'][u_key] = u_color
+            elif u_type == 'GRAY':
+                used_legend['GRAY'] = True
         else:
             fill_rgb = (200, 200, 200)
+            used_legend['GRAY'] = True
 
         target_coords = [(sx, sy)]
         if c_name in EXTRA_SEEDS:
@@ -768,7 +781,7 @@ def render_osaka_map_and_collect_mixes(df_map_source, j_cmap, t_cmap):
     else:
         cropped_img = canvas_rgb
 
-    return cropped_img, used_mixes
+    return cropped_img, used_legend
 
 # 5. タブUI構成
 tab_names = [
@@ -784,7 +797,7 @@ tabs = st.tabs(tab_names)
 
 pattern_active_records = {1: [], 2: [], 3: [], 4: []}
 pattern_map_images = {1: None, 2: None, 3: None, 4: None}
-pattern_legend_info = {1: {}, 2: {}, 3: {}, 4: {}} # エクセル凡例出力用に営業所カラー・混色辞書を保持
+pattern_legend_info = {1: {}, 2: {}, 3: {}, 4: {}}
 
 display_cols = [
     '市町村コード', '市町村名', '市町村一括担当', '市町村一括担当営業所',
@@ -951,45 +964,44 @@ for p_idx in [1, 2, 3, 4]:
         st.session_state[f"table_data_p{p_idx}"] = curr_p_df
         pattern_active_records[p_idx] = p_active
 
-        # マップ生成と高コントラスト組み合わせ凡例の自動表示
-        cropped_img, used_mixes_p = render_osaka_map_and_collect_mixes(curr_p_df, j_color_map_p, t_color_map_p)
+        # ① マップ生成と「使用中凡例のみ」取得
+        cropped_img, used_legend_p = render_osaka_map_and_collect_used_legend(curr_p_df, j_color_map_p, t_color_map_p)
         pattern_map_images[p_idx] = cropped_img
-        pattern_legend_info[p_idx] = {
-            'j_offices': j_offices_p,
-            't_offices': t_offices_p,
-            'j_cmap': j_color_map_p,
-            't_cmap': t_color_map_p,
-            'mixes': used_mixes_p
-        }
+        pattern_legend_info[p_idx] = used_legend_p
 
         st.markdown("---")
         st.subheader(f"🗺️ 案{p_idx} 白地図エリアマップ")
         
-        st.markdown("##### 📌 営業所別 カラー凡例（拡大カラーブロック表示）")
+        st.markdown("##### 📌 営業所別 カラー凡例（地図上で使用中の営業所・組み合わせのみ表示）")
         leg_cols = st.columns(3)
         with leg_cols[0]:
             st.write("**🔴 J社 営業所**")
-            for off in j_offices_p:
-                c = j_color_map_p.get(off, (220, 38, 38))
-                hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
-                st.markdown(f'<span style="color:{hex_c}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:16px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
+            if used_legend_p['J']:
+                for off, c in sorted(used_legend_p['J'].items()):
+                    hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
+                    st.markdown(f'<span style="color:{hex_c}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:16px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
+            else:
+                st.caption("（単独使用なし）")
                 
         with leg_cols[1]:
             st.write("**🔵 T社 営業所**")
-            for off in t_offices_p:
-                c = t_color_map_p.get(off, (37, 99, 235))
-                hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
-                st.markdown(f'<span style="color:{hex_c}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:16px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
+            if used_legend_p['T']:
+                for off, c in sorted(used_legend_p['T'].items()):
+                    hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
+                    st.markdown(f'<span style="color:{hex_c}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:16px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
+            else:
+                st.caption("（単独使用なし）")
 
         with leg_cols[2]:
             st.write("**🎨 組み合わせ（J社個別 × T社個別）**")
-            if used_mixes_p:
-                for mix_lbl, m_rgb in used_mixes_p.items():
+            if used_legend_p['MIX']:
+                for mix_lbl, m_rgb in used_legend_p['MIX'].items():
                     hex_m = f"#{m_rgb[0]:02x}{m_rgb[1]:02x}{m_rgb[2]:02x}"
                     st.markdown(f'<span style="color:{hex_m}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:15px; font-weight:bold; vertical-align:middle;">{mix_lbl}</span>', unsafe_allow_html=True)
             else:
                 st.caption("（個別併用エリアなし）")
-            st.markdown('<span style="color:#C8C8C8; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:15px; font-weight:bold; vertical-align:middle;">未割り当て（灰色）</span>', unsafe_allow_html=True)
+            if used_legend_p['GRAY']:
+                st.markdown('<span style="color:#C8C8C8; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:15px; font-weight:bold; vertical-align:middle;">未割り当て（灰色）</span>', unsafe_allow_html=True)
 
         st.write("")
         if cropped_img is not None:
@@ -1039,41 +1051,39 @@ with tabs[6]:
     ]
     j_cmap_opt, t_cmap_opt, j_offs_opt, t_offs_opt = generate_office_colors(df_j, df_t, opt_custom_offices)
     
-    # 最適解マップ生成と高コントラスト組み合わせ凡例の自動表示
-    opt_map_image, used_mixes_opt = render_osaka_map_and_collect_mixes(best_opt_res['df'], j_cmap_opt, t_cmap_opt)
-    opt_legend_info = {
-        'j_offices': j_offs_opt,
-        't_offices': t_offs_opt,
-        'j_cmap': j_cmap_opt,
-        't_cmap': t_cmap_opt,
-        'mixes': used_mixes_opt
-    }
+    # ① 最適解マップ生成と「使用中凡例のみ」取得
+    opt_map_image, opt_legend_info = render_osaka_map_and_collect_used_legend(best_opt_res['df'], j_cmap_opt, t_cmap_opt)
 
-    st.markdown("##### 📌 営業所別 カラー凡例（拡大カラーブロック表示）")
+    st.markdown("##### 📌 営業所別 カラー凡例（地図上で使用中の営業所・組み合わせのみ表示）")
     leg_cols_opt = st.columns(3)
     with leg_cols_opt[0]:
         st.write("**🔴 J社 営業所**")
-        for off in j_offs_opt:
-            c = j_cmap_opt.get(off, (220, 38, 38))
-            hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
-            st.markdown(f'<span style="color:{hex_c}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:16px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
+        if opt_legend_info['J']:
+            for off, c in sorted(opt_legend_info['J'].items()):
+                hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
+                st.markdown(f'<span style="color:{hex_c}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:16px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
+        else:
+            st.caption("（単独使用なし）")
             
     with leg_cols_opt[1]:
         st.write("**🔵 T社 営業所**")
-        for off in t_offs_opt:
-            c = t_cmap_opt.get(off, (37, 99, 235))
-            hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
-            st.markdown(f'<span style="color:{hex_c}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:16px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
+        if opt_legend_info['T']:
+            for off, c in sorted(opt_legend_info['T'].items()):
+                hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
+                st.markdown(f'<span style="color:{hex_c}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:16px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
+        else:
+            st.caption("（単独使用なし）")
 
     with leg_cols_opt[2]:
         st.write("**🎨 組み合わせ（J社個別 × T社個別）**")
-        if used_mixes_opt:
-            for mix_lbl, m_rgb in used_mixes_opt.items():
+        if opt_legend_info['MIX']:
+            for mix_lbl, m_rgb in opt_legend_info['MIX'].items():
                 hex_m = f"#{m_rgb[0]:02x}{m_rgb[1]:02x}{m_rgb[2]:02x}"
                 st.markdown(f'<span style="color:{hex_m}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:15px; font-weight:bold; vertical-align:middle;">{mix_lbl}</span>', unsafe_allow_html=True)
         else:
             st.caption("（個別併用エリアなし）")
-        st.markdown('<span style="color:#C8C8C8; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:15px; font-weight:bold; vertical-align:middle;">未割り当て（灰色）</span>', unsafe_allow_html=True)
+        if opt_legend_info['GRAY']:
+            st.markdown('<span style="color:#C8C8C8; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:15px; font-weight:bold; vertical-align:middle;">未割り当て（灰色）</span>', unsafe_allow_html=True)
 
     st.write("")
     if opt_map_image is not None:
@@ -1286,7 +1296,7 @@ with tabs[0]:
                 ws_p.column_dimensions['K'].width = 18.9
                 ws_p.column_dimensions['L'].width = 20.6
 
-        # シート「白地図エリアマップ」生成（各白地図＋凡例表を出力）
+        # シート「白地図エリアマップ」生成（各白地図＋47行目以下への使用中凡例表を出力）
         ws_map = wb.create_sheet(title="白地図エリアマップ")
         ws_map.views.sheetView[0].showGridLines = True
         ws_map['A1'] = "🗺️ 大阪府 市区町村別受持選択 白地図エリアマップ（案1〜案4・最適解 比較一覧）"
@@ -1316,16 +1326,15 @@ with tabs[0]:
                 cell_item.font = data_font
                 cell_item.border = border_thin
 
-        # 凡例描画用ヘルパー関数
-        def write_legend_block_to_excel(ws_target, start_col_idx, start_row_idx, legend_dict):
+        # ② 地図で使用しているものだけを出力する凡例描画用ヘルパー関数
+        def write_used_legend_block_to_excel(ws_target, start_col_idx, start_row_idx, used_legend_dict):
             curr_r = start_row_idx
-            title_c = ws_target.cell(row=curr_r, column=start_col_idx, value="【凡例（色分け一覧）】")
+            title_c = ws_target.cell(row=curr_r, column=start_col_idx, value="【凡例（地図使用色のみ）】")
             title_c.font = Font(name='BIZ UDPゴシック', size=10, bold=True)
             curr_r += 1
             
-            # J社営業所
-            for off_name in legend_dict.get('j_offices', []):
-                rgb = legend_dict['j_cmap'].get(off_name, (220, 38, 38))
+            # 使用中のJ社営業所
+            for off_name, rgb in sorted(used_legend_dict.get('J', {}).items()):
                 hex_c = f"{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
                 c_box = ws_target.cell(row=curr_r, column=start_col_idx, value="")
                 c_box.fill = PatternFill(start_color=hex_c, end_color=hex_c, fill_type="solid")
@@ -1334,9 +1343,8 @@ with tabs[0]:
                 c_lbl.font = Font(name='BIZ UDPゴシック', size=9)
                 curr_r += 1
                 
-            # T社営業所
-            for off_name in legend_dict.get('t_offices', []):
-                rgb = legend_dict['t_cmap'].get(off_name, (37, 99, 235))
+            # 使用中のT社営業所
+            for off_name, rgb in sorted(used_legend_dict.get('T', {}).items()):
                 hex_c = f"{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
                 c_box = ws_target.cell(row=curr_r, column=start_col_idx, value="")
                 c_box.fill = PatternFill(start_color=hex_c, end_color=hex_c, fill_type="solid")
@@ -1345,8 +1353,8 @@ with tabs[0]:
                 c_lbl.font = Font(name='BIZ UDPゴシック', size=9)
                 curr_r += 1
                 
-            # 組み合わせ（J社個別 × T社個別）
-            for mix_lbl, rgb in legend_dict.get('mixes', {}).items():
+            # 使用中の組み合わせ（J社個別 × T社個別）
+            for mix_lbl, rgb in used_legend_dict.get('MIX', {}).items():
                 hex_c = f"{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
                 c_box = ws_target.cell(row=curr_r, column=start_col_idx, value="")
                 c_box.fill = PatternFill(start_color=hex_c, end_color=hex_c, fill_type="solid")
@@ -1355,12 +1363,13 @@ with tabs[0]:
                 c_lbl.font = Font(name='BIZ UDPゴシック', size=9)
                 curr_r += 1
                 
-            # 未割り当て（灰色）
-            c_box_gray = ws_target.cell(row=curr_r, column=start_col_idx, value="")
-            c_box_gray.fill = PatternFill(start_color="C8C8C8", end_color="C8C8C8", fill_type="solid")
-            c_box_gray.border = border_thin
-            c_lbl_gray = ws_target.cell(row=curr_r, column=start_col_idx + 1, value="未割り当て（灰色）")
-            c_lbl_gray.font = Font(name='BIZ UDPゴシック', size=9)
+            # 未割り当て（灰色）が使用されていた場合のみ出力
+            if used_legend_dict.get('GRAY', False):
+                c_box_gray = ws_target.cell(row=curr_r, column=start_col_idx, value="")
+                c_box_gray.fill = PatternFill(start_color="C8C8C8", end_color="C8C8C8", fill_type="solid")
+                c_box_gray.border = border_thin
+                c_lbl_gray = ws_target.cell(row=curr_r, column=start_col_idx + 1, value="未割り当て（灰色）")
+                c_lbl_gray.font = Font(name='BIZ UDPゴシック', size=9)
 
         map_cell_positions = {
             1: ('B', 2, 13, 14),    # 案1 (列B=2)
@@ -1370,7 +1379,8 @@ with tabs[0]:
             5: ('AI', 35, 13, 14)   # 最適解 (列AI=35)
         }
         
-        legend_start_row = 42 # マップ画像（高さ520px ≒ 27行）のすぐ下の行番号
+        # ③ 凡例が47行目以下に表示されるように開始行を47に設定
+        legend_start_row = 47
         
         for p_i in [1, 2, 3, 4]:
             col_let, col_num, t_row, img_row = map_cell_positions[p_i]
@@ -1389,8 +1399,8 @@ with tabs[0]:
                     xl_img.height = 520
                     ws_map.add_image(xl_img, f"{col_let}{img_row}")
             
-            # 凡例出力
-            write_legend_block_to_excel(ws_map, col_num, legend_start_row, pattern_legend_info[p_i])
+            # 凡例出力（47行目以下）
+            write_used_legend_block_to_excel(ws_map, col_num, legend_start_row, pattern_legend_info[p_i])
 
         col_let_opt, col_num_opt, t_row_opt, img_row_opt = map_cell_positions[5]
         t_cell_opt = ws_map[f"{col_let_opt}{t_row_opt}"]
@@ -1405,8 +1415,8 @@ with tabs[0]:
                 xl_img_opt.height = 520
                 ws_map.add_image(xl_img_opt, f"{col_let_opt}{img_row_opt}")
 
-        # 最適解の凡例出力
-        write_legend_block_to_excel(ws_map, col_num_opt, legend_start_row, opt_legend_info)
+        # 最適解の凡例出力（47行目以下）
+        write_used_legend_block_to_excel(ws_map, col_num_opt, legend_start_row, opt_legend_info)
 
         ws_map.column_dimensions['A'].width = 14.3
         ws_map.column_dimensions['B'].width = 21.5
