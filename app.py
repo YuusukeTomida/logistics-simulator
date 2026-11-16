@@ -342,7 +342,7 @@ EXTRA_SEEDS = {
     '泉佐野市': [(236, 1101)]
 }
 
-# ① 地図色塗り優先順位＆「使用中の色・営業所」を追跡する関数
+# 1) 全体マップ色塗り優先順位＆「使用中の色・営業所」を追跡する関数
 def get_city_fill_color_and_usage(bulk_comp, bulk_off, j_indiv, t_indiv, j_cmap, t_cmap, assigned_mix_colors):
     bulk_comp = str(bulk_comp).strip()
     bulk_off = str(bulk_off).strip()
@@ -394,6 +394,37 @@ def get_city_fill_color_and_usage(bulk_comp, bulk_off, j_indiv, t_indiv, j_cmap,
 
     # 優先順位3: J社個別、T社個別にも入力がない場合は灰色で塗りつぶし
     return (200, 200, 200), ('GRAY', '未割り当て（灰色）', (200, 200, 200))
+
+# ① 2) 一括担当営業所のみ色塗りする専用関数（一括担当以外のエリアは白塗り）
+def get_bulk_only_fill_color(bulk_comp, bulk_off, j_cmap, t_cmap):
+    bulk_comp = str(bulk_comp).strip()
+    bulk_off = str(bulk_off).strip()
+    
+    def find_office_key_and_color(off_name, preferred_comp=None):
+        clean_name = off_name.replace('(委託)', '').replace('（委託）', '').strip()
+        if preferred_comp == 'J社':
+            if clean_name in j_cmap: return ('J', clean_name, j_cmap[clean_name])
+            if off_name in j_cmap: return ('J', off_name, j_cmap[off_name])
+        elif preferred_comp == 'T社':
+            if clean_name in t_cmap: return ('T', clean_name, t_cmap[clean_name])
+            if off_name in t_cmap: return ('T', off_name, t_cmap[off_name])
+        if clean_name in j_cmap: return ('J', clean_name, j_cmap[clean_name])
+        if off_name in j_cmap: return ('J', off_name, j_cmap[off_name])
+        if clean_name in t_cmap: return ('T', clean_name, t_cmap[clean_name])
+        if off_name in t_cmap: return ('T', off_name, t_cmap[off_name])
+        return None
+
+    if bulk_comp in ['J社', 'T社'] and bulk_off not in ['-', 'nan', 'None', '']:
+        res = find_office_key_and_color(bulk_off, bulk_comp)
+        if res is not None:
+            return res[2], res
+    elif bulk_off not in ['-', 'nan', 'None', '']:
+        res = find_office_key_and_color(bulk_off, None)
+        if res is not None:
+            return res[2], res
+
+    # 一括担当営業所ではないエリアは白色（塗りつぶしなし）
+    return (255, 255, 255), None
 
 # 4. 距離・トンキロ算出関数
 def compute_distance_and_tonkm(city_name, bulk_comp, bulk_off, j_indiv_off, t_indiv_off, wt_j_kg, wt_t_kg, office_info, municipal_coords):
@@ -682,8 +713,8 @@ if imported_scenario_file is not None:
     except Exception as e_imp:
         st.sidebar.error(f"Excel取り込みエラー: {e_imp}")
 
-# ① & ② 白地図生成共通ヘルパー関数（「地図に色塗りで使用しているものだけ」を凡例リストとして返却）
-def render_osaka_map_and_collect_used_legend(df_map_source, j_cmap, t_cmap):
+# 白地図生成共通ヘルパー関数（bulk_only=True の場合、一括担当営業所のみを色塗りし他は白色にする）
+def render_osaka_map_and_collect_used_legend(df_map_source, j_cmap, t_cmap, bulk_only=False):
     map_img_path = None
     for target_path in ["画像4_2.png", "画像4_2.jpg", "画像4.png", "画像3.jpg"]:
         if os.path.exists(target_path):
@@ -719,25 +750,41 @@ def render_osaka_map_and_collect_used_legend(df_map_source, j_cmap, t_cmap):
     for c_name, (sx, sy) in CITY_SEEDS.items():
         r_data = city_row_map.get(c_name)
         if r_data is not None:
-            fill_rgb, usage_tuple = get_city_fill_color_and_usage(
-                r_data.get('市町村一括担当', 'なし'),
-                r_data.get('市町村一括担当営業所', '-'),
-                r_data.get('J社個別', '-'),
-                r_data.get('T社個別', '-'),
-                j_cmap, t_cmap, assigned_mix_colors
-            )
-            u_type, u_key, u_color = usage_tuple
-            if u_type == 'J':
-                used_legend['J'][u_key] = u_color
-            elif u_type == 'T':
-                used_legend['T'][u_key] = u_color
-            elif u_type == 'MIX':
-                used_legend['MIX'][u_key] = u_color
-            elif u_type == 'GRAY':
-                used_legend['GRAY'] = True
+            if bulk_only:
+                fill_rgb, usage_tuple = get_bulk_only_fill_color(
+                    r_data.get('市町村一括担当', 'なし'),
+                    r_data.get('市町村一括担当営業所', '-'),
+                    j_cmap, t_cmap
+                )
+                if usage_tuple is not None:
+                    u_type, u_key, u_color = usage_tuple
+                    if u_type == 'J':
+                        used_legend['J'][u_key] = u_color
+                    elif u_type == 'T':
+                        used_legend['T'][u_key] = u_color
+            else:
+                fill_rgb, usage_tuple = get_city_fill_color_and_usage(
+                    r_data.get('市町村一括担当', 'なし'),
+                    r_data.get('市町村一括担当営業所', '-'),
+                    r_data.get('J社個別', '-'),
+                    r_data.get('T社個別', '-'),
+                    j_cmap, t_cmap, assigned_mix_colors
+                )
+                u_type, u_key, u_color = usage_tuple
+                if u_type == 'J':
+                    used_legend['J'][u_key] = u_color
+                elif u_type == 'T':
+                    used_legend['T'][u_key] = u_color
+                elif u_type == 'MIX':
+                    used_legend['MIX'][u_key] = u_color
+                elif u_type == 'GRAY':
+                    used_legend['GRAY'] = True
         else:
-            fill_rgb = (200, 200, 200)
-            used_legend['GRAY'] = True
+            if bulk_only:
+                fill_rgb = (255, 255, 255)
+            else:
+                fill_rgb = (200, 200, 200)
+                used_legend['GRAY'] = True
 
         target_coords = [(sx, sy)]
         if c_name in EXTRA_SEEDS:
@@ -797,6 +844,7 @@ tabs = st.tabs(tab_names)
 
 pattern_active_records = {1: [], 2: [], 3: [], 4: []}
 pattern_map_images = {1: None, 2: None, 3: None, 4: None}
+pattern_bulk_map_images = {1: None, 2: None, 3: None, 4: None} # ② 一括担当限定マップ保持辞書
 pattern_legend_info = {1: {}, 2: {}, 3: {}, 4: {}}
 
 display_cols = [
@@ -964,13 +1012,17 @@ for p_idx in [1, 2, 3, 4]:
         st.session_state[f"table_data_p{p_idx}"] = curr_p_df
         pattern_active_records[p_idx] = p_active
 
-        # ① マップ生成と「使用中凡例のみ」取得
-        cropped_img, used_legend_p = render_osaka_map_and_collect_used_legend(curr_p_df, j_color_map_p, t_color_map_p)
+        # 1) 全体受持エリアマップ生成
+        cropped_img, used_legend_p = render_osaka_map_and_collect_used_legend(curr_p_df, j_color_map_p, t_color_map_p, bulk_only=False)
         pattern_map_images[p_idx] = cropped_img
         pattern_legend_info[p_idx] = used_legend_p
 
+        # ① 2) 一括担当エリア限定マップ生成（J社・T社一括担当営業所のみ色塗り）
+        cropped_bulk_img, used_bulk_legend_p = render_osaka_map_and_collect_used_legend(curr_p_df, j_color_map_p, t_color_map_p, bulk_only=True)
+        pattern_bulk_map_images[p_idx] = cropped_bulk_img
+
         st.markdown("---")
-        st.subheader(f"🗺️ 案{p_idx} 白地図エリアマップ")
+        st.subheader(f"🗺️ 案{p_idx} 白地図エリアマップ（全体受持）")
         
         st.markdown("##### 📌 営業所別 カラー凡例（地図上で使用中の営業所・組み合わせのみ表示）")
         leg_cols = st.columns(3)
@@ -1009,6 +1061,35 @@ for p_idx in [1, 2, 3, 4]:
             with map_col2:
                 st.image(cropped_img, width=600)
 
+        # ① 現在表示されている白地図の下に「一括担当営業所のみ色塗りをした白地図」を別で表示
+        st.markdown("---")
+        st.subheader(f"🗺️ 案{p_idx} 一括担当エリア限定 白地図マップ（J社・T社一括担当のみ着色）")
+        st.caption("「市町村一括担当営業所」に設定されているエリアのみ該当営業所の色で塗りつぶしています（それ以外は白色）。")
+        
+        bulk_leg_cols = st.columns(2)
+        with bulk_leg_cols[0]:
+            st.write("**🔴 J社 一括担当営業所**")
+            if used_bulk_legend_p['J']:
+                for off, c in sorted(used_bulk_legend_p['J'].items()):
+                    hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
+                    st.markdown(f'<span style="color:{hex_c}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:16px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
+            else:
+                st.caption("（J社一括担当なし）")
+        with bulk_leg_cols[1]:
+            st.write("**🔵 T社 一括担当営業所**")
+            if used_bulk_legend_p['T']:
+                for off, c in sorted(used_bulk_legend_p['T'].items()):
+                    hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
+                    st.markdown(f'<span style="color:{hex_c}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:16px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
+            else:
+                st.caption("（T社一括担当なし）")
+
+        st.write("")
+        if cropped_bulk_img is not None:
+            bmap_col1, bmap_col2, bmap_col3 = st.columns([1, 4, 1])
+            with bmap_col2:
+                st.image(cropped_bulk_img, width=600)
+
 # UIタブ「⭐ 最適解：受持選択」のレンダリング
 with tabs[6]:
     st.subheader("⭐ トンキロ最小化：全体最適解（1拠点新設 ＆ 既存2拠点廃止）")
@@ -1044,15 +1125,17 @@ with tabs[6]:
     )
 
     st.markdown("---")
-    st.subheader("🗺️ 最適解 白地図エリアマップ")
+    st.subheader("🗺️ 最適解 白地図エリアマップ（全体受持）")
     opt_custom_offices = [
         {'company': 'J社', 'name': 'J社最適', 'address': best_opt_res['cand_address'], 'coords': best_opt_res['cand_coords']},
         {'company': 'T社', 'name': 'T社最適', 'address': best_opt_res['cand_address'], 'coords': best_opt_res['cand_coords']}
     ]
     j_cmap_opt, t_cmap_opt, j_offs_opt, t_offs_opt = generate_office_colors(df_j, df_t, opt_custom_offices)
     
-    # ① 最適解マップ生成と「使用中凡例のみ」取得
-    opt_map_image, opt_legend_info = render_osaka_map_and_collect_used_legend(best_opt_res['df'], j_cmap_opt, t_cmap_opt)
+    # 1) 全体受持マップ
+    opt_map_image, opt_legend_info = render_osaka_map_and_collect_used_legend(best_opt_res['df'], j_cmap_opt, t_cmap_opt, bulk_only=False)
+    # ① 2) 一括担当エリア限定マップ
+    opt_bulk_map_image, opt_bulk_legend_info = render_osaka_map_and_collect_used_legend(best_opt_res['df'], j_cmap_opt, t_cmap_opt, bulk_only=True)
 
     st.markdown("##### 📌 営業所別 カラー凡例（地図上で使用中の営業所・組み合わせのみ表示）")
     leg_cols_opt = st.columns(3)
@@ -1090,6 +1173,35 @@ with tabs[6]:
         map_col1_o, map_col2_o, map_col3_o = st.columns([1, 4, 1])
         with map_col2_o:
             st.image(opt_map_image, width=600)
+
+    # ① 最適解：一括担当エリア限定マップの表示
+    st.markdown("---")
+    st.subheader("🗺️ 最適解 一括担当エリア限定 白地図マップ（J社・T社一括担当のみ着色）")
+    st.caption("「市町村一括担当営業所」に設定されているエリアのみ該当営業所の色で塗りつぶしています（それ以外は白色）。")
+    
+    bulk_leg_cols_opt = st.columns(2)
+    with bulk_leg_cols_opt[0]:
+        st.write("**🔴 J社 一括担当営業所**")
+        if opt_bulk_legend_info['J']:
+            for off, c in sorted(opt_bulk_legend_info['J'].items()):
+                hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
+                st.markdown(f'<span style="color:{hex_c}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:16px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
+        else:
+            st.caption("（J社一括担当なし）")
+    with bulk_leg_cols_opt[1]:
+        st.write("**🔵 T社 一括担当営業所**")
+        if opt_bulk_legend_info['T']:
+            for off, c in sorted(opt_bulk_legend_info['T'].items()):
+                hex_c = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
+                st.markdown(f'<span style="color:{hex_c}; font-size:42px; vertical-align:middle; line-height:1;">■</span> <span style="font-size:16px; font-weight:bold; vertical-align:middle;">{off}</span>', unsafe_allow_html=True)
+        else:
+            st.caption("（T社一括担当なし）")
+
+    st.write("")
+    if opt_bulk_map_image is not None:
+        bmap_col1_o, bmap_col2_o, bmap_col3_o = st.columns([1, 4, 1])
+        with bmap_col2_o:
+            st.image(opt_bulk_map_image, width=600)
 
 # タブ1: 全体サマリー ＆ 現状 vs 4つの変更案 ＋ 最適解比較
 with tabs[0]:
@@ -1296,7 +1408,7 @@ with tabs[0]:
                 ws_p.column_dimensions['K'].width = 18.9
                 ws_p.column_dimensions['L'].width = 20.6
 
-        # シート「白地図エリアマップ」生成（各白地図＋47行目以下への使用中凡例表を出力）
+        # ② シート「白地図エリアマップ」生成（上段: 全体受持マップ / 下段: 一括担当限定マップ / 凡例）
         ws_map = wb.create_sheet(title="白地図エリアマップ")
         ws_map.views.sheetView[0].showGridLines = True
         ws_map['A1'] = "🗺️ 大阪府 市区町村別受持選択 白地図エリアマップ（案1〜案4・最適解 比較一覧）"
@@ -1326,14 +1438,12 @@ with tabs[0]:
                 cell_item.font = data_font
                 cell_item.border = border_thin
 
-        # ② 地図で使用しているものだけを出力する凡例描画用ヘルパー関数
         def write_used_legend_block_to_excel(ws_target, start_col_idx, start_row_idx, used_legend_dict):
             curr_r = start_row_idx
             title_c = ws_target.cell(row=curr_r, column=start_col_idx, value="【凡例（地図使用色のみ）】")
             title_c.font = Font(name='BIZ UDPゴシック', size=10, bold=True)
             curr_r += 1
             
-            # 使用中のJ社営業所
             for off_name, rgb in sorted(used_legend_dict.get('J', {}).items()):
                 hex_c = f"{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
                 c_box = ws_target.cell(row=curr_r, column=start_col_idx, value="")
@@ -1343,7 +1453,6 @@ with tabs[0]:
                 c_lbl.font = Font(name='BIZ UDPゴシック', size=9)
                 curr_r += 1
                 
-            # 使用中のT社営業所
             for off_name, rgb in sorted(used_legend_dict.get('T', {}).items()):
                 hex_c = f"{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
                 c_box = ws_target.cell(row=curr_r, column=start_col_idx, value="")
@@ -1353,7 +1462,6 @@ with tabs[0]:
                 c_lbl.font = Font(name='BIZ UDPゴシック', size=9)
                 curr_r += 1
                 
-            # 使用中の組み合わせ（J社個別 × T社個別）
             for mix_lbl, rgb in used_legend_dict.get('MIX', {}).items():
                 hex_c = f"{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
                 c_box = ws_target.cell(row=curr_r, column=start_col_idx, value="")
@@ -1363,7 +1471,6 @@ with tabs[0]:
                 c_lbl.font = Font(name='BIZ UDPゴシック', size=9)
                 curr_r += 1
                 
-            # 未割り当て（灰色）が使用されていた場合のみ出力
             if used_legend_dict.get('GRAY', False):
                 c_box_gray = ws_target.cell(row=curr_r, column=start_col_idx, value="")
                 c_box_gray.fill = PatternFill(start_color="C8C8C8", end_color="C8C8C8", fill_type="solid")
@@ -1371,41 +1478,64 @@ with tabs[0]:
                 c_lbl_gray = ws_target.cell(row=curr_r, column=start_col_idx + 1, value="未割り当て（灰色）")
                 c_lbl_gray.font = Font(name='BIZ UDPゴシック', size=9)
 
+        # 配置マッピング（上段: 全体マップ 13〜14行 / 下段: 一括担当限定マップ 42〜43行 / 凡例: 72行〜）
         map_cell_positions = {
-            1: ('B', 2, 13, 14),    # 案1 (列B=2)
-            2: ('E', 5, 13, 14),    # 案2 (列E=5)
-            3: ('M', 13, 13, 14),   # 案3 (列M=13)
-            4: ('X', 24, 13, 14),   # 案4 (列X=24)
-            5: ('AI', 35, 13, 14)   # 最適解 (列AI=35)
+            1: ('B', 2, 13, 14, 42, 43),    # 案1
+            2: ('E', 5, 13, 14, 42, 43),    # 案2
+            3: ('M', 13, 13, 14, 42, 43),   # 案3
+            4: ('X', 24, 13, 14, 42, 43),   # 案4
+            5: ('AI', 35, 13, 14, 42, 43)   # 最適解
         }
         
-        # ③ 凡例が47行目以下に表示されるように開始行を47に設定
-        legend_start_row = 47
+        ws_map['A12'] = "【1. 全体受持エリア 白地図マップ】"
+        ws_map['A12'].font = Font(name='BIZ UDPゴシック', size=11, bold=True)
+        ws_map['A41'] = "【2. 一括担当エリア限定 白地図マップ（J社・T社一括担当のみ着色）】"
+        ws_map['A41'].font = Font(name='BIZ UDPゴシック', size=11, bold=True)
+        
+        legend_start_row = 72
         
         for p_i in [1, 2, 3, 4]:
-            col_let, col_num, t_row, img_row = map_cell_positions[p_i]
-            t_cell = ws_map[f"{col_let}{t_row}"]
-            t_cell.value = f"■ 案{p_i} マップ"
-            t_cell.font = Font(name='BIZ UDPゴシック', size=11, bold=True)
+            col_let, col_num, t_row1, img_row1, t_row2, img_row2 = map_cell_positions[p_i]
+            
+            # 1. 全体受持マップ
+            t_cell1 = ws_map[f"{col_let}{t_row1}"]
+            t_cell1.value = f"■ 案{p_i} 全体マップ"
+            t_cell1.font = Font(name='BIZ UDPゴシック', size=11, bold=True)
             
             m_img = pattern_map_images[p_i]
             if m_img is not None:
                 b_rgb = cv2.cvtColor(m_img, cv2.COLOR_RGB2BGR)
                 is_ok, buffer = cv2.imencode(".png", b_rgb)
                 if is_ok:
-                    img_stream = io.BytesIO(buffer)
-                    xl_img = OpenPyxlImage(img_stream)
+                    xl_img = OpenPyxlImage(io.BytesIO(buffer))
                     xl_img.width = 380
                     xl_img.height = 520
-                    ws_map.add_image(xl_img, f"{col_let}{img_row}")
+                    ws_map.add_image(xl_img, f"{col_let}{img_row1}")
+
+            # 2. ② 一括担当限定マップ
+            t_cell2 = ws_map[f"{col_let}{t_row2}"]
+            t_cell2.value = f"■ 案{p_i} 一括担当マップ"
+            t_cell2.font = Font(name='BIZ UDPゴシック', size=11, bold=True)
             
-            # 凡例出力（47行目以下）
+            b_img = pattern_bulk_map_images[p_i]
+            if b_img is not None:
+                b_rgb2 = cv2.cvtColor(b_img, cv2.COLOR_RGB2BGR)
+                is_ok2, buffer2 = cv2.imencode(".png", b_rgb2)
+                if is_ok2:
+                    xl_img2 = OpenPyxlImage(io.BytesIO(buffer2))
+                    xl_img2.width = 380
+                    xl_img2.height = 520
+                    ws_map.add_image(xl_img2, f"{col_let}{img_row2}")
+            
+            # 凡例出力
             write_used_legend_block_to_excel(ws_map, col_num, legend_start_row, pattern_legend_info[p_i])
 
-        col_let_opt, col_num_opt, t_row_opt, img_row_opt = map_cell_positions[5]
-        t_cell_opt = ws_map[f"{col_let_opt}{t_row_opt}"]
-        t_cell_opt.value = "■ 最適解 マップ"
-        t_cell_opt.font = Font(name='BIZ UDPゴシック', size=11, bold=True)
+        # 最適解マップ（全体 & 一括担当）と凡例
+        col_let_opt, col_num_opt, t_row1_opt, img_row1_opt, t_row2_opt, img_row2_opt = map_cell_positions[5]
+        
+        t_cell1_opt = ws_map[f"{col_let_opt}{t_row1_opt}"]
+        t_cell1_opt.value = "■ 最適解 全体マップ"
+        t_cell1_opt.font = Font(name='BIZ UDPゴシック', size=11, bold=True)
         if opt_map_image is not None:
             b_rgb_opt = cv2.cvtColor(opt_map_image, cv2.COLOR_RGB2BGR)
             is_ok_opt, buffer_opt = cv2.imencode(".png", b_rgb_opt)
@@ -1413,9 +1543,20 @@ with tabs[0]:
                 xl_img_opt = OpenPyxlImage(io.BytesIO(buffer_opt))
                 xl_img_opt.width = 380
                 xl_img_opt.height = 520
-                ws_map.add_image(xl_img_opt, f"{col_let_opt}{img_row_opt}")
+                ws_map.add_image(xl_img_opt, f"{col_let_opt}{img_row1_opt}")
 
-        # 最適解の凡例出力（47行目以下）
+        t_cell2_opt = ws_map[f"{col_let_opt}{t_row2_opt}"]
+        t_cell2_opt.value = "■ 最適解 一括担当マップ"
+        t_cell2_opt.font = Font(name='BIZ UDPゴシック', size=11, bold=True)
+        if opt_bulk_map_image is not None:
+            b_rgb_opt2 = cv2.cvtColor(opt_bulk_map_image, cv2.COLOR_RGB2BGR)
+            is_ok_opt2, buffer_opt2 = cv2.imencode(".png", b_rgb_opt2)
+            if is_ok_opt2:
+                xl_img_opt2 = OpenPyxlImage(io.BytesIO(buffer_opt2))
+                xl_img_opt2.width = 380
+                xl_img_opt2.height = 520
+                ws_map.add_image(xl_img_opt2, f"{col_let_opt}{img_row2_opt}")
+
         write_used_legend_block_to_excel(ws_map, col_num_opt, legend_start_row, opt_legend_info)
 
         ws_map.column_dimensions['A'].width = 14.3
