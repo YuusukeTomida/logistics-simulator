@@ -315,7 +315,7 @@ def generate_office_colors(df_j, df_t, custom_offices, p_idx=None):
     j_cust = [o['name'] for o in custom_offices if o['company'] == 'J社']
     t_cust = [o['name'] for o in custom_offices if o['company'] == 'T社']
     
-    # ① 案1〜4で新規拠点の(委託)もプルダウンで選択できるよう追加
+    # 案1〜4で新規拠点の(委託)もプルダウンで選択できるよう追加
     j_cust_sub = [f"{name}(委託)" for name in j_cust if '(委託)' not in name]
     t_cust_sub = [f"{name}(委託)" for name in t_cust if '(委託)' not in name]
     if p_idx is not None:
@@ -1676,7 +1676,7 @@ with tabs[0]:
         for hidden_col in hidden_cols_all:
             ws_map.column_dimensions[hidden_col].hidden = True
 
-        # シート「営業所別集計比較」の出力追加（② 新規拠点の委託行を追加）
+        # シート「営業所別集計比較」の出力追加（トンキロ合計では委託分を除外）
         base_j_offices_ex = sorted(list(set(df_j['J社営業所名'].dropna().astype(str).tolist())))
         base_t_offices_ex = sorted(list(set(df_t['T社営業所名'].dropna().astype(str).tolist())))
 
@@ -1759,7 +1759,7 @@ with tabs[0]:
                 f'最適解５{suffix}': round(m_opt5.get((comp_name, f"{comp_name}最適5"), 0.0), 2),
             })
 
-            # ② 新規営業所(委託)の追加行
+            # 新規営業所(委託)の追加行
             rows.append({
                 '営業所名': f"{comp_name}新規営業所(委託)",
                 f'現状{suffix}': 0.0,
@@ -1775,10 +1775,12 @@ with tabs[0]:
             })
             
             df_sub = pd.DataFrame(rows)
+            # トンキロ集計の場合は「(委託)」行を合計から除外し、配達重量の場合は全行合計する
+            df_for_tot = df_sub if is_weight else df_sub[~df_sub['営業所名'].astype(str).str.contains('委託')]
             tot_row = {'営業所名': '合計'}
             for col_c in df_sub.columns:
                 if col_c != '営業所名':
-                    tot_row[col_c] = round(df_sub[col_c].sum(), 2)
+                    tot_row[col_c] = round(df_for_tot[col_c].sum(), 2)
                     
             return pd.concat([df_sub, pd.DataFrame([tot_row])], ignore_index=True)
 
@@ -1812,7 +1814,7 @@ with tabs[0]:
                 cell_d.font = data_font; cell_d.border = border_thin
 
         row_start_tk = row_start_t + len(df_t_w_ex) + 4
-        ws_off.cell(row=row_start_tk, column=1, value="【2. 各営業所の「現状」vs「案1〜4」vs「最適解1〜5」合計トンキロ（t・km）比較】").font = Font(name='BIZ UDPゴシック', size=11, bold=True)
+        ws_off.cell(row=row_start_tk, column=1, value="【2. 各営業所の「現状」vs「案1〜4」vs「最適解1〜5」合計トンキロ（t・km）比較（※合計欄は委託分除く）】").font = Font(name='BIZ UDPゴシック', size=11, bold=True)
         
         df_j_tk_ex = build_comp_ex_df('J社', base_j_offices_ex, is_weight=False)
         df_t_tk_ex = build_comp_ex_df('T社', base_t_offices_ex, is_weight=False)
@@ -1887,7 +1889,7 @@ with tabs[0]:
         use_container_width=True, hide_index=True
     )
 
-# タブ2: 営業所別 集計比較（① J社新規営業所(委託) / T社新規営業所(委託) の行を追加）
+# タブ2: 営業所別 集計比較（トンキロ集計では委託分を合計から除外）
 with tabs[1]:
     st.subheader("🏬 各営業所の「現状」vs「案1〜案4」vs「最適解1〜5」集計比較")
     st.caption("J社・T社それぞれの営業所について、「現状」「案1〜案4」「最適解1〜5」での合計配達重量（t）および合計トンキロ（t・km）を一括比較します。")
@@ -1968,7 +1970,7 @@ with tabs[1]:
             '最適解５_配達重量_t': round(opt5_w_map.get((comp_name, f"{comp_name}最適5"), 0.0), 2),
         })
 
-        # ① 新規営業所(委託)の追加行
+        # 新規営業所(委託)の追加行
         rows.append({
             '営業所名': f"{comp_name}新規営業所(委託)",
             '現状_配達重量_t': 0.0,
@@ -1990,7 +1992,7 @@ with tabs[1]:
                 tot_row[col_c] = round(df_sub[col_c].sum(), 2)
         return pd.concat([df_sub, pd.DataFrame([tot_row])], ignore_index=True)
 
-    # 2. 合計トンキロ（t・km）比較テーブルの構築
+    # 2. 合計トンキロ（t・km）比較テーブルの構築（※合計行では委託分を除外）
     def build_company_tonkm_compare_df(comp_name, base_offices):
         rows = []
         for off in base_offices:
@@ -2023,7 +2025,7 @@ with tabs[1]:
             '最適解５_トンキロ': round(opt5_tk_map.get((comp_name, f"{comp_name}最適5"), 0.0), 2),
         })
 
-        # ① 新規営業所(委託)の追加行
+        # 新規営業所(委託)の追加行
         rows.append({
             '営業所名': f"{comp_name}新規営業所(委託)",
             '現状_トンキロ': 0.0,
@@ -2039,10 +2041,12 @@ with tabs[1]:
         })
         
         df_sub = pd.DataFrame(rows)
+        # トンキロ集計は「委託」行を除外して合計を算出
+        df_non_sub = df_sub[~df_sub['営業所名'].astype(str).str.contains('委託')]
         tot_row = {'営業所名': '合計'}
         for col_c in df_sub.columns:
             if col_c != '営業所名':
-                tot_row[col_c] = round(df_sub[col_c].sum(), 2)
+                tot_row[col_c] = round(df_non_sub[col_c].sum(), 2)
         return pd.concat([df_sub, pd.DataFrame([tot_row])], ignore_index=True)
 
     # 1) 配達重量（t）比較表示
@@ -2064,6 +2068,7 @@ with tabs[1]:
 
     # 2) トンキロ（t・km）比較表示
     st.markdown("### 🚚 2. 各営業所の「現状」vs「案1〜案4」vs「最適解1〜5」合計トンキロ（t・km）比較")
+    st.caption("※ トンキロの「合計」欄は外部委託（(委託)）分を除いた自社営業所のみの合計値です。")
     col_tk1, col_tk2 = st.columns(2)
     with col_tk1:
         st.markdown("#### 🔴 J社 営業所別 トンキロ（t・km）比較表")
